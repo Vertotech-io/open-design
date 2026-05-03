@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { delimiter } from 'node:path';
 import path from 'node:path';
 import { homedir } from 'node:os';
@@ -67,6 +67,54 @@ const agentCapabilities = new Map();
 
 const DEFAULT_MODEL_OPTION = { id: 'default', label: 'Default (CLI config)' };
 
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item) =>
+      typeof item === 'string' &&
+      item.length > 0 &&
+      !item.includes('\0'),
+  );
+}
+
+function normalizeEnvMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (
+      typeof raw === 'string' ||
+      typeof raw === 'number' ||
+      typeof raw === 'boolean'
+    ) {
+      out[key] = String(raw);
+    }
+  }
+  return out;
+}
+
+function normalizeModelOptions(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [DEFAULT_MODEL_OPTION];
+  const seen = new Set(['default']);
+  for (const item of value) {
+    const id =
+      typeof item === 'string'
+        ? item.trim()
+        : item && typeof item === 'object' && typeof item.id === 'string'
+          ? item.id.trim()
+          : '';
+    if (!sanitizeCustomModel(id) || seen.has(id)) continue;
+    seen.add(id);
+    const label =
+      item && typeof item === 'object' && typeof item.label === 'string'
+        ? item.label.trim()
+        : '';
+    out.push({ id, label: label || id });
+  }
+  return out.length > 1 ? out : null;
+}
+
 // Map a user-picked reasoning effort to one the chosen model will accept.
 // Codex's CLI accepts `none | minimal | low | medium | high | xhigh`, but
 // real models support narrower subsets — gpt-5.2/5.3/5.4/5.5 reject
@@ -113,7 +161,42 @@ function parseLineSeparatedModels(stdout) {
   return out;
 }
 
-export const AGENT_DEFS = [
+function buildClaudeCodeArgs(
+  capabilityId,
+  _prompt,
+  _imagePaths,
+  extraAllowedDirs = [],
+  options = {},
+) {
+  const caps = agentCapabilities.get(capabilityId) || {};
+  const args = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+  ];
+  // `--include-partial-messages` lands richer streaming events but only
+  // exists in newer Claude Code builds. Older installs reject it with
+  // "unknown option" and exit 1, killing the chat. Gate on the probe.
+  if (caps.partialMessages) {
+    args.push('--include-partial-messages');
+  }
+  if (options.model && options.model !== 'default') {
+    args.push('--model', options.model);
+  }
+  const dirs = (extraAllowedDirs || []).filter(
+    (d) => typeof d === 'string' && d.length > 0,
+  );
+  // `--add-dir` is older but still gate it for symmetry — old/forked
+  // builds may lack it.
+  if (dirs.length > 0 && caps.addDir !== false) {
+    args.push('--add-dir', ...dirs);
+  }
+  args.push('--permission-mode', 'bypassPermissions');
+  return args;
+}
+
+const BASE_AGENT_DEFS = [
   {
     id: 'claude',
     name: 'Claude Code',
@@ -151,34 +234,7 @@ export const AGENT_DEFS = [
     // prompt reads the prompt from stdin under `--input-format text` (the
     // default), which has no length cap. Mirrors the codex/gemini/opencode/
     // cursor/qwen entries below.
-    buildArgs: (_prompt, _imagePaths, extraAllowedDirs = [], options = {}) => {
-      const caps = agentCapabilities.get('claude') || {};
-      const args = [
-        '-p',
-        '--output-format',
-        'stream-json',
-        '--verbose',
-      ];
-      // `--include-partial-messages` lands richer streaming events but only
-      // exists in newer Claude Code builds. Older installs reject it with
-      // "unknown option" and exit 1, killing the chat. Gate on the probe.
-      if (caps.partialMessages) {
-        args.push('--include-partial-messages');
-      }
-      if (options.model && options.model !== 'default') {
-        args.push('--model', options.model);
-      }
-      const dirs = (extraAllowedDirs || []).filter(
-        (d) => typeof d === 'string' && d.length > 0,
-      );
-      // `--add-dir` is older but still gate it for symmetry — old/forked
-      // builds may lack it.
-      if (dirs.length > 0 && caps.addDir !== false) {
-        args.push('--add-dir', ...dirs);
-      }
-      args.push('--permission-mode', 'bypassPermissions');
-      return args;
-    },
+    buildArgs: (...args) => buildClaudeCodeArgs('claude', ...args),
     promptViaStdin: true,
     streamFormat: 'claude-stream-json',
   },
@@ -596,6 +652,91 @@ export const AGENT_DEFS = [
   },
 ];
 
+function localAgentProfilesFile() {
+  const explicit = process.env.OD_AGENT_PROFILES_CONFIG;
+  if (typeof explicit === 'string' && explicit.trim()) {
+    return explicit.trim();
+  }
+  return path.join(homedir(), '.open-design', 'agents.local.json');
+}
+
+function createLocalAgentDef(raw, baseDefs = BASE_AGENT_DEFS) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(id)) return null;
+  if (baseDefs.some((def) => def.id === id)) return null;
+
+  const hasExplicitBaseAgent =
+    typeof raw.baseAgent === 'string' && raw.baseAgent.trim().length > 0;
+  const baseId =
+    hasExplicitBaseAgent
+      ? raw.baseAgent.trim()
+      : 'claude';
+  const base = baseDefs.find((def) => def.id === baseId);
+  if (!base || typeof base.buildArgs !== 'function') {
+    if (hasExplicitBaseAgent) {
+      console.warn(
+        `[agents] skipping local profile "${id}": unknown baseAgent "${baseId}"`,
+      );
+    }
+    return null;
+  }
+
+  const bin =
+    typeof raw.bin === 'string' && raw.bin.trim() && !raw.bin.includes('\0')
+      ? raw.bin.trim()
+      : base.bin;
+  const name =
+    typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : id;
+  const prefixArgs = normalizeStringList(raw.args ?? raw.prefixArgs);
+  const env = normalizeEnvMap(raw.env);
+  const fallbackModels =
+    normalizeModelOptions(raw.models) || base.fallbackModels || [DEFAULT_MODEL_OPTION];
+  const versionArgs = normalizeStringList(raw.versionArgs);
+  const helpArgs = normalizeStringList(raw.helpArgs);
+
+  return {
+    ...base,
+    id,
+    name,
+    bin,
+    versionArgs: versionArgs.length > 0 ? versionArgs : base.versionArgs,
+    helpArgs: helpArgs.length > 0 ? helpArgs : base.helpArgs,
+    fallbackModels,
+    env,
+    buildArgs: (...args) => [...prefixArgs, ...base.buildArgs(...args)],
+  };
+}
+
+export function readLocalAgentProfileDefs(baseDefs = BASE_AGENT_DEFS) {
+  let parsed;
+  try {
+    const raw = readFileSync(localAgentProfilesFile(), 'utf8');
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const profiles = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed?.agents)
+      ? parsed.agents
+      : [];
+  const defs = [];
+  const seen = new Set(baseDefs.map((def) => def.id));
+  for (const profile of profiles) {
+    const def = createLocalAgentDef(profile, baseDefs);
+    if (!def || seen.has(def.id)) continue;
+    seen.add(def.id);
+    defs.push(def);
+  }
+  return defs;
+}
+
+export const AGENT_DEFS = [
+  ...BASE_AGENT_DEFS,
+  ...readLocalAgentProfileDefs(BASE_AGENT_DEFS),
+];
+
 function existingDirsUnder(root, segments = []) {
   const dirs = [];
   let entries = [];
@@ -727,7 +868,7 @@ async function probe(def) {
   const resolved = resolveAgentExecutable(def);
   if (!resolved) {
     return {
-      ...stripFns(def),
+      ...stripAgentDefForApi(def),
       models: def.fallbackModels ?? [DEFAULT_MODEL_OPTION],
       available: false,
     };
@@ -759,7 +900,7 @@ async function probe(def) {
   }
   const models = await fetchModels(def, resolved);
   return {
-    ...stripFns(def),
+    ...stripAgentDefForApi(def),
     models,
     available: true,
     path: resolved,
@@ -767,7 +908,7 @@ async function probe(def) {
   };
 }
 
-function stripFns(def) {
+export function stripAgentDefForApi(def) {
   // Drop the buildArgs / listModels closures but keep declarative metadata
   // (reasoningOptions, streamFormat, name, bin, etc.). `models` is
   // populated separately by `fetchModels`, so we strip the static
@@ -782,6 +923,7 @@ function stripFns(def) {
     helpArgs,
     capabilityFlags,
     fallbackBins,
+    env,
     ...rest
   } = def;
   return rest;

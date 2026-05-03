@@ -4,7 +4,12 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AGENT_DEFS, resolveAgentExecutable } from '../src/agents.js';
+import {
+  AGENT_DEFS,
+  readLocalAgentProfileDefs,
+  resolveAgentExecutable,
+  stripAgentDefForApi,
+} from '../src/agents.js';
 
 const codex = AGENT_DEFS.find((agent) => agent.id === 'codex');
 const copilot = AGENT_DEFS.find((agent) => agent.id === 'copilot');
@@ -17,6 +22,7 @@ const originalDisablePlugins = process.env.OD_CODEX_DISABLE_PLUGINS;
 const originalPath = process.env.PATH;
 const originalHome = process.env.HOME;
 const originalAgentHome = process.env.OD_AGENT_HOME;
+const originalAgentProfilesConfig = process.env.OD_AGENT_PROFILES_CONFIG;
 
 afterEach(() => {
   if (originalDisablePlugins == null) {
@@ -34,6 +40,11 @@ afterEach(() => {
     delete process.env.OD_AGENT_HOME;
   } else {
     process.env.OD_AGENT_HOME = originalAgentHome;
+  }
+  if (originalAgentProfilesConfig == null) {
+    delete process.env.OD_AGENT_PROFILES_CONFIG;
+  } else {
+    process.env.OD_AGENT_PROFILES_CONFIG = originalAgentProfilesConfig;
   }
 });
 
@@ -266,6 +277,153 @@ test('claude flags promptViaStdin and never embeds the prompt in argv', () => {
   // `-p` (print mode) must still be present; without it claude drops into
   // an interactive REPL that the daemon has no TTY for.
   assert.ok(args.includes('-p'), 'claude argv must include -p');
+});
+
+test('local agent profile config can define wrapper-backed profiles', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-agent-profiles-'));
+  try {
+    const file = join(dir, 'agents.local.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        agents: [
+          {
+            id: 'local-claude-wrapper',
+            name: 'Local Claude Wrapper',
+            baseAgent: 'claude',
+            bin: 'local-claude',
+            args: ['--profile', 'demo'],
+            env: {
+              LOCAL_AGENT_ROUTE: 'demo',
+              BAD_KEY_NAME: 'kept',
+              'bad-key': 'dropped',
+            },
+            models: [{ id: 'custom-model', label: 'Custom Model' }],
+          },
+        ],
+      }),
+    );
+    process.env.OD_AGENT_PROFILES_CONFIG = file;
+
+    const defs = readLocalAgentProfileDefs();
+    assert.equal(defs.length, 1);
+    const profile = defs[0];
+    assert.equal(profile.id, 'local-claude-wrapper');
+    assert.equal(profile.name, 'Local Claude Wrapper');
+    assert.equal(profile.bin, 'local-claude');
+    assert.equal(profile.env.LOCAL_AGENT_ROUTE, 'demo');
+    assert.equal(profile.env.BAD_KEY_NAME, 'kept');
+    assert.equal(profile.env['bad-key'], undefined);
+    assert.deepEqual(profile.fallbackModels, [
+      { id: 'default', label: 'Default (CLI config)' },
+      { id: 'custom-model', label: 'Custom Model' },
+    ]);
+
+    const args = profile.buildArgs('', [], [], { model: 'custom-model' }, {});
+    assert.deepEqual(args.slice(0, 2), ['--profile', 'demo']);
+    assert.ok(args.includes('--model'));
+    assert.ok(args.includes('custom-model'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('local agent profile defaults to claude when baseAgent is omitted', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-agent-profiles-'));
+  try {
+    const file = join(dir, 'agents.local.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        agents: [
+          {
+            id: 'default-base-wrapper',
+            bin: 'local-claude',
+            args: ['--profile', 'default-base'],
+          },
+        ],
+      }),
+    );
+    process.env.OD_AGENT_PROFILES_CONFIG = file;
+
+    const defs = readLocalAgentProfileDefs();
+    assert.equal(defs.length, 1);
+    const profile = defs[0];
+    assert.equal(profile.promptViaStdin, claude.promptViaStdin);
+    assert.equal(profile.streamFormat, claude.streamFormat);
+
+    const args = profile.buildArgs('', [], [], {}, {});
+    assert.deepEqual(args.slice(0, 2), ['--profile', 'default-base']);
+    assert.ok(args.includes('--permission-mode'));
+    assert.ok(args.includes('bypassPermissions'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('local agent profile skips explicit unknown baseAgent with a warning', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-agent-profiles-'));
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    const file = join(dir, 'agents.local.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        agents: [
+          {
+            id: 'unknown-base-wrapper',
+            baseAgent: 'missing-agent',
+            bin: 'local-agent',
+          },
+        ],
+      }),
+    );
+    process.env.OD_AGENT_PROFILES_CONFIG = file;
+
+    const defs = readLocalAgentProfileDefs();
+    assert.equal(defs.length, 0);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /unknown-base-wrapper/);
+    assert.match(warnings[0], /missing-agent/);
+  } finally {
+    console.warn = originalWarn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('local agent profile env does not leak into API metadata', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-agent-profiles-'));
+  try {
+    const file = join(dir, 'agents.local.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        agents: [
+          {
+            id: 'private-env-wrapper',
+            bin: 'local-claude',
+            env: {
+              LOCAL_AGENT_TOKEN: 'secret-token',
+              LOCAL_AGENT_ROUTE: 'demo',
+            },
+          },
+        ],
+      }),
+    );
+    process.env.OD_AGENT_PROFILES_CONFIG = file;
+
+    const [profile] = readLocalAgentProfileDefs();
+    const apiInfo = stripAgentDefForApi(profile);
+
+    assert.equal('env' in apiInfo, false);
+    assert.equal('buildArgs' in apiInfo, false);
+    assert.equal(JSON.stringify(apiInfo).includes('secret-token'), false);
+    assert.equal(JSON.stringify(apiInfo).includes('LOCAL_AGENT_TOKEN'), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---- OpenClaude fallback (issue #235) -------------------------------------
