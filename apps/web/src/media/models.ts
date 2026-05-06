@@ -43,6 +43,7 @@ export type MediaProviderId =
   | 'udio'
   | 'elevenlabs'
   | 'fishaudio'
+  | 'deepinfra'
   | 'stub';
 
 export interface MediaProvider {
@@ -183,6 +184,14 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     docsUrl: 'https://fish.audio',
   },
   {
+    id: 'deepinfra',
+    label: 'DeepInfra',
+    hint: 'Qwen-Image-Edit · Qwen-Image-Max · etc.',
+    integrated: true,
+    defaultBaseUrl: 'https://api.deepinfra.com/v1',
+    docsUrl: 'https://deepinfra.com/dash/api_keys',
+  },
+  {
     id: 'stub',
     label: 'Stub (placeholder)',
     hint: 'Deterministic local placeholder bytes',
@@ -281,6 +290,68 @@ export const IMAGE_MODELS: MediaModel[] = [
     hint: 'xAI · 2K text-to-image',
     provider: 'grok',
     caps: ['t2i'],
+  },
+
+  // DeepInfra-hosted image models. Four options today:
+  //
+  //   * flux-2-klein-4b — Black Forest Labs FLUX 2 klein, the fastest
+  //     of the FLUX 2 family. Best-in-class prompt adherence and
+  //     in-image text rendering. Use when the composition has multiple
+  //     labeled scenes / specific characters / readable text.
+  //
+  //   * qwen-image-max — Qwen-Image-Max, text-to-image. Cheaper t2i;
+  //     good general-purpose pick when prompt adherence matters less
+  //     than output style.
+  //
+  //   * wan-2.7-image-edit — Alibaba Wan 2.7, bleeding-edge i2i; closest
+  //     DeepInfra analog to gpt-image-2's edit mode for high-fidelity
+  //     style-transfer templates. Use for template previews and output
+  //     intended for end users.
+  //
+  //   * qwen-image-edit — Qwen-Image-Edit, faster + cheaper but lower
+  //     fidelity. Use for quick smoke tests and prototyping where wire
+  //     correctness matters more than output polish.
+  {
+    id: 'flux-2-pro',
+    label: 'FLUX-2-pro',
+    hint: 'DeepInfra · BFL FLUX 2 pro · top-tier for photoreal/modern illustration; weak on hand-drawn styles',
+    provider: 'deepinfra',
+    caps: ['t2i'],
+  },
+  {
+    id: 'flux-2-klein-4b',
+    label: 'FLUX-2-klein-4b',
+    hint: 'DeepInfra · BFL FLUX 2 klein · fastest, but in-image text is weak',
+    provider: 'deepinfra',
+    caps: ['t2i'],
+  },
+  {
+    id: 'qwen-image-max',
+    label: 'Qwen-Image-Max',
+    hint: 'DeepInfra · Qwen-Image-Max · cheaper general-purpose t2i',
+    provider: 'deepinfra',
+    caps: ['t2i'],
+  },
+  {
+    id: 'seedream-4',
+    label: 'Seedream-4',
+    hint: 'DeepInfra · ByteDance Seedream-4 · multimodal t2i, but in-image text is weak',
+    provider: 'deepinfra',
+    caps: ['t2i'],
+  },
+  {
+    id: 'wan-2.7-image-edit',
+    label: 'Wan-2.7-Image-Edit',
+    hint: 'DeepInfra · Alibaba Wan 2.7 · high-fidelity i2i edit',
+    provider: 'deepinfra',
+    caps: ['i2i'],
+  },
+  {
+    id: 'qwen-image-edit',
+    label: 'Qwen-Image-Edit',
+    hint: 'DeepInfra · Qwen i2i · cheaper, lower fidelity',
+    provider: 'deepinfra',
+    caps: ['i2i'],
   },
 
   // Black Forest Labs FLUX family.

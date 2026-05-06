@@ -359,6 +359,11 @@ export async function generateMedia(args) {
       bytes = result.bytes;
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
+    } else if (def.provider === 'deepinfra' && surface === 'image') {
+      const result = await renderDeepInfraImage(ctx, credentials);
+      bytes = result.bytes;
+      providerNote = result.providerNote;
+      suggestedExt = result.suggestedExt;
     } else if (def.provider === 'grok' && surface === 'video') {
       const result = await renderGrokVideo(ctx, credentials, args.onProgress);
       bytes = result.bytes;
@@ -1032,6 +1037,138 @@ async function renderGrokImage(ctx, credentials) {
   return {
     bytes,
     providerNote: `grok/${ctx.model} · ${aspectRatio} · ${bytes.length} bytes`,
+    suggestedExt: sniffImageExt(bytes),
+  };
+}
+
+// Provider: DeepInfra. Each entry maps our short model id (the one in
+// IMAGE_MODELS) to the upstream repo-style id and a per-model body
+// builder, since DeepInfra's /v1/inference/<model_id> request schema
+// varies by model — Qwen/Qwen-Image-Edit takes a single `image: <str>`,
+// Wan-AI/Wan2.7-Image-Edit takes `image_urls: [<str>...]`. The schema
+// quirks come from each model's upstream HF/Modelscope card; DeepInfra
+// passes them through verbatim. When adding a new model, look up its
+// schema on the model's DeepInfra page and add the buildBody fn here.
+type DeepInfraImageModel = {
+  remote: string;
+  /** 't2i' models accept prompt-only requests; 'i2i' models require ctx.imageRef. */
+  mode: 't2i' | 'i2i';
+  /** imageDataUrl is null for t2i, the data URL for i2i. */
+  buildBody: (prompt: string, imageDataUrl: string | null) => Record<string, unknown>;
+};
+const DEEPINFRA_IMAGE_MODELS: Record<string, DeepInfraImageModel> = {
+  'qwen-image-edit': {
+    remote: 'Qwen/Qwen-Image-Edit',
+    mode: 'i2i',
+    buildBody: (prompt, image) => ({ prompt, image }),
+  },
+  'wan-2.7-image-edit': {
+    remote: 'Wan-AI/Wan2.7-Image-Edit',
+    mode: 'i2i',
+    buildBody: (prompt, image) => ({ prompt, image_urls: [image] }),
+  },
+  'qwen-image-max': {
+    remote: 'Qwen/Qwen-Image-Max',
+    mode: 't2i',
+    buildBody: (prompt) => ({ prompt }),
+  },
+  'flux-2-klein-4b': {
+    remote: 'black-forest-labs/FLUX-2-klein-4b',
+    mode: 't2i',
+    buildBody: (prompt) => ({ prompt }),
+  },
+  'flux-2-pro': {
+    remote: 'black-forest-labs/FLUX-2-pro',
+    mode: 't2i',
+    buildBody: (prompt) => ({ prompt }),
+  },
+  'seedream-4': {
+    remote: 'ByteDance/Seedream-4',
+    mode: 't2i',
+    // Seedream's upstream Volcengine schema uses {prompt, size}; DeepInfra
+    // passes through. Bare {prompt} returns a 500 "request_info init
+    // exception". Default to a 16:9-ish 1280x720 since that's our smoke
+    // ratio; users wanting different sizes will need a richer body
+    // builder (out of scope for this wiring).
+    buildBody: (prompt) => ({ prompt, size: '1280x720' }),
+  },
+};
+
+async function renderDeepInfraImage(ctx, credentials) {
+  if (!credentials.apiKey) {
+    throw new Error(
+      'no DeepInfra API key — configure it in Settings or set DEEPINFRA_API_KEY',
+    );
+  }
+  const def = DEEPINFRA_IMAGE_MODELS[ctx.model];
+  if (!def) {
+    throw new Error(
+      `deepinfra image: unknown model "${ctx.model}" (only ${Object.keys(DEEPINFRA_IMAGE_MODELS).join(', ')} wired today)`,
+    );
+  }
+  // i2i models require a reference image; t2i models forbid one.
+  // Fail loudly on mismatch rather than silently coerce — the modes
+  // produce very different outputs and the user's intent matters.
+  if (def.mode === 'i2i' && (!ctx.imageRef || !ctx.imageRef.dataUrl)) {
+    throw new Error(
+      `deepinfra ${ctx.model} (i2i) needs a reference image — pass --image or upload one`,
+    );
+  }
+  const baseUrl = (credentials.baseUrl || 'https://api.deepinfra.com/v1').replace(/\/$/, '');
+  const url = `${baseUrl}/inference/${def.remote}`;
+  const body = def.buildBody(
+    ctx.prompt || 'rework the given image',
+    def.mode === 'i2i' ? ctx.imageRef.dataUrl : null,
+  );
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'authorization': `Bearer ${credentials.apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`deepinfra image ${resp.status}: ${truncate(text, 240)}`);
+  }
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`deepinfra image non-JSON: ${truncate(text, 200)}`);
+  }
+  // Different DeepInfra-hosted image models wrap their output in different
+  // top-level keys. Fall through the common shapes before erroring:
+  //   * Qwen-Image-Edit / Qwen-Image-Max: { images: ["data:..." | "http..."] }
+  //   * Wan-2.7-Image-Edit:               { images: [...] }
+  //   * Some i2v-style models:            { output: [...] }
+  //   * Seedream-4 / older shapes:        { image: "..." }
+  //   * FLUX-2-pro (BFL passthrough):     { image_url: "https://delivery.us3.bfl.ai/..." }
+  let entry = null;
+  if (Array.isArray(data?.images) && data.images.length > 0) entry = data.images[0];
+  else if (Array.isArray(data?.output) && data.output.length > 0) entry = data.output[0];
+  else if (typeof data?.image === 'string') entry = data.image;
+  else if (typeof data?.image_url === 'string') entry = data.image_url;
+  if (typeof entry !== 'string' || !entry) {
+    throw new Error(`deepinfra image: response had no images/output/image field`);
+  }
+  let bytes;
+  if (entry.startsWith('data:')) {
+    const comma = entry.indexOf(',');
+    if (comma < 0) throw new Error('deepinfra image: malformed data URL');
+    bytes = Buffer.from(entry.slice(comma + 1), 'base64');
+  } else if (entry.startsWith('http://') || entry.startsWith('https://')) {
+    const imgResp = await fetch(entry);
+    if (!imgResp.ok) throw new Error(`deepinfra image fetch ${imgResp.status}`);
+    bytes = Buffer.from(await imgResp.arrayBuffer());
+  } else {
+    // Plain base64 fallback.
+    bytes = Buffer.from(entry, 'base64');
+  }
+  return {
+    bytes,
+    providerNote: `deepinfra/${def.remote} · ${def.mode} · ${bytes.length} bytes`,
     suggestedExt: sniffImageExt(bytes),
   };
 }

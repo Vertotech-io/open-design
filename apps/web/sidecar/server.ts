@@ -27,6 +27,14 @@ import {
   type SidecarRuntimeContext,
 } from "@open-design/sidecar";
 
+import {
+  configFromEnv as beamBridgeConfigFromEnv,
+  handleBeamRunCancel,
+  handleBeamRunEvents,
+  handleBeamRunStart,
+  matchBeamBridgeRoute,
+} from "./beam-bridge.js";
+
 const HOST = process.env.OD_HOST || "127.0.0.1";
 if (process.env.OD_HOST != null && !/^[a-zA-Z0-9._\-:[\]@]+$/.test(process.env.OD_HOST)) {
   throw new Error(`OD_HOST contains invalid characters: ${process.env.OD_HOST}`);
@@ -508,6 +516,66 @@ function attachParentMonitor(stop: () => Promise<void>): void {
   timer.unref();
 }
 
+export async function startWebSidecar(runtime: SidecarRuntimeContext<SidecarStamp>): Promise<WebSidecarHandle> {
+  const dir = resolveWebRoot();
+  const app = createNextServer({ dev: process.env.OD_WEB_PROD !== "1" && runtime.mode === "dev", dir });
+  await prepareNextApp(app, dir);
+
+  const daemonOrigin = resolveDaemonOrigin();
+  const beamBridgeConfig = beamBridgeConfigFromEnv();
+  if (beamBridgeConfig != null) {
+    console.log(
+      `[od-web] BEAM bridge active: routing run/event traffic to ${beamBridgeConfig.daemonUrl}`,
+    );
+  }
+  const handleRequest = app.getRequestHandler();
+  const httpServer = createHttpServer((request, response) => {
+    if (beamBridgeConfig != null && request.url != null) {
+      let parsedUrl: URL | null = null;
+      try {
+        parsedUrl = new URL(request.url, `http://${HOST}`);
+      } catch {
+        parsedUrl = null;
+      }
+      if (parsedUrl != null) {
+        const match = matchBeamBridgeRoute(request.method, parsedUrl.pathname);
+        if (match != null) {
+          const handle =
+            match.kind === "start"
+              ? handleBeamRunStart(beamBridgeConfig, request, response)
+              : match.kind === "events"
+                ? Promise.resolve(
+                    handleBeamRunEvents(beamBridgeConfig, match.runId!, request, response),
+                  )
+                : Promise.resolve(
+                    handleBeamRunCancel(beamBridgeConfig, match.runId!, request, response),
+                  );
+          void handle.catch((error: unknown) => {
+            if (!response.headersSent) {
+              response.statusCode = 502;
+              response.setHeader("content-type", "text/plain; charset=utf-8");
+            }
+            response.end(error instanceof Error ? error.message : String(error));
+          });
+          return;
+        }
+      }
+    }
+
+    const daemonProxyTarget = daemonOrigin == null ? null : resolveDaemonProxyTarget(daemonOrigin, request.url);
+    if (daemonProxyTarget != null) {
+      void proxyToDaemon(daemonProxyTarget, request, response).catch((error: unknown) => {
+        response.statusCode = 502;
+        response.end(error instanceof Error ? error.message : String(error));
+      });
+      return;
+    }
+
+    void handleRequest(request, response).catch((error: unknown) => {
+      response.statusCode = 500;
+      response.end(error instanceof Error ? error.message : String(error));
+    });
+  });
 async function createWebSidecarHandle(
   runtime: SidecarRuntimeContext<SidecarStamp>,
   httpServer: HttpServer,

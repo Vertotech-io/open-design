@@ -1,0 +1,34 @@
+{
+  "id": "illustration-thing-explainer-rework",
+  "surface": "image",
+  "title": "Illustration - Thing Explainer Rework",
+  "summary": "A style-transfer prompt that reworks any reference image (system diagram, infographic, technical concept, UI mockup) into the visual and verbal style of *Thing Explainer: Complicated Stuff in Simple Words* by Randall Munroe. Combines the xkcd visual vocabulary (black ink on white, hand-lettered ALL-CAPS labels, simple stick figures and shapes) with deep cross-section labeling and — critically — the *ten hundred most-used English words* constraint: every label must use only common words. So 'verifier' becomes 'place that checks', 'credential' becomes 'paper that says it's true', 'zero-knowledge proof' becomes 'way to show you have a thing without showing the thing'. Sidesteps the jargon-density failure mode of typical technical illustrations as well as the uncanny-face and garbled-text failures of painterly styles. Best fit for explainers about systems, protocols, devices, and anything where the goal is 'a curious 10-year-old gets it'.",
+  "category": "Illustration",
+  "tags": [
+    "illustration",
+    "thing-explainer",
+    "munroe",
+    "xkcd-family",
+    "simple-words",
+    "ten-hundred-words",
+    "diagrammatic",
+    "cross-section",
+    "hand-lettered",
+    "black-ink",
+    "explainer",
+    "infographic",
+    "image-to-image",
+    "rework",
+    "transform"
+  ],
+  "model": "gpt-image-2",
+  "aspect": "16:9",
+  "prompt": "Rework the given image into the style of *Thing Explainer* by Randall Munroe. Solid black ink on white, with the occasional flat color dot for emphasis (red, blue, or yellow on a single key element). Stick-figure people (round featureless bald heads, thin line bodies). Objects as clean schematic outlines. Preserve the layout of the original.\n\nLABELING: every meaningful element gets a small label with a thin arrow pointing to it (Thing Explainer's deeply-annotated cross-section feel). Add labels generously.\n\nLETTERING: ALL HAND-LETTERED ALL-CAPS, slightly uneven baseline, clean legible block letters. Must always be readable — do not garble.\n\nVOCABULARY (the defining rule): every word in every label and caption must come from the *ten hundred most-used English words*. Replace every piece of jargon with a common-words paraphrase. Examples:\n  - verifier → place that checks\n  - issuer → place that gives out\n  - credential → paper that says it's true\n  - zero-knowledge proof → way to show you have a thing without showing the thing\n  - cryptographic signature → secret mark only one place can make\n  - wallet (credentials) → small bag that holds your papers\n  - guardian → big person who looks after a kid\n  - token → short paper\n  - API → door for other computers\n  - protocol → agreed way of talking\nIf a source label uses jargon, rewrite it. Single technical nouns become 3–6 word common-words phrases.\n\nFLOURISHES: thin arrows from labels to elements, square brackets enclosing groups, dashed lines for hidden / 'this does NOT happen' connections, small asides like '(THIS PART IS WEIRD)' in hand-lettered style. Use sparingly.\n\nCAPTION: a short hand-lettered ALL-CAPS title at the top, also using only common words.\n\nAESTHETIC: hand-drawn but precise. Sparse whitespace. No shading or gradients.\n\nNegative: no color realism, no shading, no realistic faces, no soft strokes, no cuteness, no 3D, no photo elements, no sparkles, no decoration, no garbled text, no jargon anywhere — translate every technical term into common words.",
+  "previewImageUrl": "https://raw.githubusercontent.com/nexu-io/open-design/main/assets/prompt-templates/image/illustration-thing-explainer-rework.jpg",
+  "source": {
+    "repo": "nexu-io/open-design",
+    "license": "Apache-2.0",
+    "author": "open-design contributors",
+    "url": "https://github.com/nexu-io/open-design"
+  }
+}

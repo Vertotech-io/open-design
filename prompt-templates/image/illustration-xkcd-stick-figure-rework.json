@@ -1,0 +1,31 @@
+{
+  "id": "illustration-xkcd-stick-figure-rework",
+  "surface": "image",
+  "title": "Illustration - xkcd Stick-Figure Rework",
+  "summary": "A style-transfer prompt that reworks any reference image (UI mockup, concept diagram, screenshot, photo) into the visual vocabulary of an xkcd webcomic by Randall Munroe — black ink on white, simple stick figures with featureless round heads, hand-lettered ALL-CAPS labels that always stay legible, sparing diagrammatic flourishes (arrows, brackets, dashed inference lines, hash-mark axes, whimsical units like ±5%). Sidesteps the uncanny-face and garbled-text failure modes of more painterly styles, because the xkcd style language *requires* legible hand-lettering and abstracted figures. Works as image-to-image in gpt-image-2 (or any i2i edit model that respects layout, e.g. wan-2.7-image-edit on DeepInfra); pairs naturally with technical explainers, infographics, system diagrams, and any subject where label legibility matters more than ornament.",
+  "category": "Illustration",
+  "tags": [
+    "illustration",
+    "xkcd",
+    "stick-figure",
+    "munroe",
+    "diagrammatic",
+    "hand-lettered",
+    "black-ink",
+    "explainer",
+    "infographic",
+    "image-to-image",
+    "rework",
+    "transform"
+  ],
+  "model": "gpt-image-2",
+  "aspect": "16:9",
+  "prompt": "Rework the given image into the style of an xkcd webcomic by Randall Munroe. Solid black ink on white. The occasional small flat-color dot for emphasis (xkcd's rare red/blue accent on a single key element).\n\nConvert all people to simple stick figures: round featureless bald heads (just a circle), thin line bodies with stick limbs, hands as small loops or terminal dots, no facial detail (at most a single eye dot). Preserve the layout of the original — transform the rendering style first, redraw subjects second, so labels and key elements stay where they are. Line weight consistent and slightly imperfect, clearly hand-drawn.\n\nALL TEXT must be HAND-LETTERED ALL-CAPS in clean legible block letters with a slightly uneven baseline (the xkcd handwriting). Lettering must always be readable — do not garble or replace with squiggle-text. Re-letter every label and annotation from the original in this style.\n\nAdd small diagrammatic flourishes sparingly: thin arrows from labels to elements, square brackets enclosing groups, dashed lines for hidden / inferred / 'this never happens' connections, hash-mark axis ticks, whimsical units like '±5%' or '(CITATION NEEDED)' where they fit. Every flourish should clarify, not decorate.\n\nAesthetic: hand-drawn but precise, sparse whitespace, no clutter, no shading, no gradients, no perspective. A small one-line hand-lettered caption may sit centered under the panel if the source had a title worth distilling.\n\nNegative: no color realism, no shading, no realistic faces, no detailed clothing or hair, no soft strokes, no pastel palette, no cuteness, no 3D, no photo elements, no sparkles, no decoration, no garbled text, no random non-letter glyphs.",
+  "previewImageUrl": "https://raw.githubusercontent.com/nexu-io/open-design/main/assets/prompt-templates/image/illustration-xkcd-stick-figure-rework.jpg",
+  "source": {
+    "repo": "nexu-io/open-design",
+    "license": "Apache-2.0",
+    "author": "open-design contributors",
+    "url": "https://github.com/nexu-io/open-design"
+  }
+}
