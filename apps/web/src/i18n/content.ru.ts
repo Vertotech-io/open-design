@@ -287,6 +287,7 @@ export const RU_DESIGN_SYSTEM_SUMMARIES: Record<string, string> = {
   wise: 'Денежные переводы. Яркий зеленый акцент, дружелюбно и ясно.',
   'x-ai': 'AI-лаборатория Илона Маска. Строгий монохром, футуристический минимализм.',
   xiaohongshu: 'Lifestyle UGC-соцсеть. Единый фирменный красный, щедрый радиус, content-first.',
+  wechat: 'Мини-программы WeChat. Свежий зелёный (#07C160), PingFang SC, UI с чат-пузырями, панель вкладок.',
   zapier: 'Платформа автоматизации. Теплый оранжевый, дружелюбная иллюстративная подача.',
 };
 
@@ -306,6 +307,7 @@ export const RU_DESIGN_SYSTEM_CATEGORIES: Record<string, string> = {
   'Fintech & Crypto': 'Финтех и крипто',
   'E-Commerce & Retail': 'Электронная коммерция и ритейл',
   'Media & Consumer': 'Медиа и потребительские',
+  'Social & Messaging': 'Социальные сети и мессенджеры',
   Automotive: 'Автомобили',
   'Editorial & Print': 'Редакционные и печатные',
   'Editorial · Studio': 'Редакционная студия',
@@ -360,6 +362,7 @@ export const RU_SKILL_IDS_WITH_EN_FALLBACK = [
   'ib-pitch-book',
   'last30days',
   'live-dashboard',
+  'login-flow',
   'orbit-general',
   'orbit-github',
   'orbit-gmail',
@@ -458,6 +461,7 @@ export const RU_DESIGN_SYSTEM_IDS_WITH_EN_FALLBACK = [
   'urdu',
   'vibrant',
   'vintage',
+  'wechat',
   'webex',
 ] as const;
 

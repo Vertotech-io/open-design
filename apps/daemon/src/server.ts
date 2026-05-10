@@ -3,7 +3,7 @@ import type { DesktopExportPdfInput, DesktopExportPdfResult } from '@open-design
 import express from 'express';
 import multer from 'multer';
 import { execFile, spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -134,10 +134,13 @@ import {
   isSafeId,
   listFiles,
   mimeFor,
+  parseByteRange,
   projectDir,
   readProjectFile,
   renameProjectFile,
   removeProjectDir,
+  resolveProjectDir,
+  resolveProjectFilePath,
   sanitizeName,
   searchProjectFiles,
   writeProjectFile,
@@ -264,6 +267,174 @@ export function resolveDaemonCliPath(env: NodeJS.ProcessEnv = process.env): stri
 
 const PROJECT_ROOT = resolveProjectRoot(__dirname);
 const RESOURCE_ROOT_ENV = 'OD_RESOURCE_ROOT';
+
+// Desktop-import auth state (PR #974 — closes the renderer→arbitrary
+// baseDir→shell.openPath bypass chain).
+//
+// When the desktop main process starts up it sends a fresh 32-byte secret
+// to the daemon over its sidecar IPC (REGISTER_DESKTOP_AUTH). The daemon
+// stores the secret in this module-scope buffer and from then on requires
+// every POST /api/import/folder request to carry an HMAC token bound to
+// the requested baseDir. The desktop main process is the only entity that
+// can mint such a token — it owns the picker dialog and the secret — so
+// renderer JS can no longer name an arbitrary baseDir even indirectly
+// through project creation.
+//
+// Round-4 P1 (lefarcen): the gate must NOT fail open. The original
+// "secret == null → accept (web-only mode)" branch let a renderer bypass
+// when the daemon restarted mid-session (new daemon boots tokenless;
+// secret in main-process memory is now stale; renderer fetches the import
+// route directly). Two coordinated mechanisms close that:
+//
+// (1) Sticky in-process flag. Once a secret has ever been registered
+//     with this daemon process, the gate stays active for the rest of
+//     the process lifetime. A `setDesktopAuthSecret(null)` call (used
+//     by tests for cleanup) does NOT relax the gate — the flag is
+//     one-way. This closes the "secret cleared but daemon kept running"
+//     branch.
+//
+// (2) Orchestrator-pinned mode via `OD_REQUIRE_DESKTOP_AUTH=1` env var.
+//     Set by `tools-dev` / `tools-pack` / `apps/packaged` whenever the
+//     daemon is spawned in a desktop-bundled flow. Daemon reads the
+//     env at module-load time. With the flag set, the gate is active
+//     from request 0 — a renderer that races to call /api/import/folder
+//     before the desktop main process has registered its secret gets
+//     a 503 transient (retry shortly), not a free pass. Closes the
+//     daemon-restart-mid-session branch.
+//
+// In standalone-daemon (web-only) deployments where neither mechanism
+// fires, the gate stays dormant and /api/import/folder behaves exactly
+// as before.
+let desktopAuthSecret: Buffer | null = null;
+let desktopAuthEverRegistered = process.env.OD_REQUIRE_DESKTOP_AUTH === '1';
+
+// Replay protection. Each successful import token consumes its nonce; the
+// nonce stays in this map until its expiry passes, at which point the next
+// successful verification prunes it. Bounded by token TTL × import rate.
+const consumedImportNonces = new Map<string, number>();
+
+const DESKTOP_IMPORT_TOKEN_TTL_MS = 60_000;
+const DESKTOP_IMPORT_TOKEN_HEADER = 'x-od-desktop-import-token';
+
+export function setDesktopAuthSecret(secret: Buffer | null): void {
+  desktopAuthSecret = secret;
+  if (secret != null) {
+    desktopAuthEverRegistered = true;
+  }
+  consumedImportNonces.clear();
+}
+
+export function isDesktopAuthRegistered(): boolean {
+  return desktopAuthSecret != null;
+}
+
+export function isDesktopAuthGateActive(): boolean {
+  return desktopAuthEverRegistered;
+}
+
+/**
+ * Test-only helper. Round-4 added a sticky-once-set flag that survives
+ * `setDesktopAuthSecret(null)` so production code can never silently
+ * relax the gate, but daemon test files share a single HTTP server
+ * across `describe` blocks and a leaked flag would 403 every other
+ * suite's `/api/import/folder` call. This resets both bits together
+ * and is intentionally not exposed in any production boot path.
+ */
+export function resetDesktopAuthForTests(): void {
+  desktopAuthSecret = null;
+  desktopAuthEverRegistered = process.env.OD_REQUIRE_DESKTOP_AUTH === '1';
+  consumedImportNonces.clear();
+}
+
+function pruneExpiredImportNonces(now: number): void {
+  for (const [nonce, exp] of consumedImportNonces) {
+    if (exp <= now) consumedImportNonces.delete(nonce);
+  }
+}
+
+function timingSafeStringEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+// Token field separator. We deliberately avoid `.` because ISO 8601
+// expiry timestamps embed `.` (e.g. `2026-05-08T20:00:30.000Z`), which
+// would split into four parts and break a fixed-shape parser. `~` is
+// not part of base64url or ISO 8601 character sets, so the three
+// fields stay unambiguous and round-trip safe through the HTTP header.
+const DESKTOP_IMPORT_TOKEN_FIELD_SEP = '~';
+
+/**
+ * Pure-function HMAC mint helper. Exported for unit tests and for the
+ * desktop main process's `dialog:pick-and-import` IPC handler. The token
+ * shape is `${nonceB64url}~${expISO}~${signatureB64url}` so the daemon
+ * can split, parse the expiry, and verify the signature by recomputing
+ * `HMAC-SHA256(secret, baseDir + "\n" + nonce + "\n" + exp)`.
+ */
+export function signDesktopImportToken(
+  secret: Buffer,
+  baseDir: string,
+  options: { nonce: string; exp: string },
+): string {
+  const signature = createHmac('sha256', secret)
+    .update(`${baseDir}\n${options.nonce}\n${options.exp}`)
+    .digest('base64url');
+  return [options.nonce, options.exp, signature].join(DESKTOP_IMPORT_TOKEN_FIELD_SEP);
+}
+
+type DesktopImportTokenVerification =
+  | { ok: true; nonce: string; exp: number }
+  | { ok: false; reason: string };
+
+/**
+ * Verify a desktop-minted import token against the registered secret.
+ * Returns `{ ok: false, reason }` on any structural, signature, expiry,
+ * or replay failure so the middleware can map them to a single 403 with
+ * the reason in `details`. Exported for unit tests.
+ */
+export function verifyDesktopImportToken(
+  secret: Buffer,
+  baseDir: string,
+  token: string,
+  now: number,
+  consumedNonces: Map<string, number>,
+): DesktopImportTokenVerification {
+  if (typeof token !== 'string' || token.length === 0) {
+    return { ok: false, reason: 'token missing' };
+  }
+  const parts = token.split(DESKTOP_IMPORT_TOKEN_FIELD_SEP);
+  if (parts.length !== 3) {
+    return { ok: false, reason: 'token shape invalid' };
+  }
+  const [nonce, expISO, signature] = parts;
+  if (nonce.length === 0 || expISO.length === 0 || signature.length === 0) {
+    return { ok: false, reason: 'token shape invalid' };
+  }
+  const expMs = Date.parse(expISO);
+  if (!Number.isFinite(expMs)) {
+    return { ok: false, reason: 'token expiry invalid' };
+  }
+  if (expMs <= now) {
+    return { ok: false, reason: 'token expired' };
+  }
+  // Reject obviously oversized expiry windows so a compromised desktop
+  // cannot mint long-lived tokens against a small TTL contract.
+  if (expMs - now > DESKTOP_IMPORT_TOKEN_TTL_MS * 2) {
+    return { ok: false, reason: 'token expiry exceeds permitted window' };
+  }
+  const expected = createHmac('sha256', secret)
+    .update(`${baseDir}\n${nonce}\n${expISO}`)
+    .digest('base64url');
+  if (!timingSafeStringEquals(expected, signature)) {
+    return { ok: false, reason: 'token signature invalid' };
+  }
+  if (consumedNonces.has(nonce)) {
+    return { ok: false, reason: 'token nonce already used' };
+  }
+  return { ok: true, nonce, exp: expMs };
+}
 
 export function composeLiveInstructionPrompt({
   daemonSystemPrompt,
@@ -2512,11 +2683,23 @@ export async function startServer({
       // can't smuggle e.g. /etc through here. Same rule for
       // originalBaseDir / importedFrom='folder' — only the import path
       // owns those state fields.
+      //
+      // PR #974: also block client-supplied `fromTrustedPicker` here.
+      // Only the desktop HMAC-gated import flow is allowed to stamp that
+      // marker; any other route attempting to set it would let a
+      // compromised renderer launder an attacker-controlled baseDir
+      // through a future codepath that trusted the flag.
       if (metadata && typeof metadata === 'object') {
         if ('baseDir' in metadata) {
           return sendApiError(
             res, 400, 'BAD_REQUEST',
             'baseDir can only be set via POST /api/import/folder',
+          );
+        }
+        if ('fromTrustedPicker' in metadata) {
+          return sendApiError(
+            res, 400, 'BAD_REQUEST',
+            'fromTrustedPicker can only be set via POST /api/import/folder',
           );
         }
       }
@@ -2659,12 +2842,86 @@ export async function startServer({
   // No copy, no shadow tree — the user owns the workspace and is
   // responsible for their own version control (git, time machine, etc.),
   // mirroring how Cursor / Claude Code / Aider behave.
+  //
+  // PR #974 trust boundary: when the desktop main process has registered
+  // an auth secret with the daemon (REGISTER_DESKTOP_AUTH sidecar IPC),
+  // every request here must carry an HMAC token in
+  // `X-OD-Desktop-Import-Token` that binds nonce + expiry + baseDir to
+  // the picker-originated path. Without that gate a compromised renderer
+  // could call this route directly with an arbitrary absolute path and
+  // then call `openPath(projectId)` on the resulting project to reveal
+  // attacker-chosen filesystem locations in Finder/Explorer.
   app.post('/api/import/folder', async (req, res) => {
     try {
       const { baseDir, name, skillId, designSystemId } = req.body || {};
       if (typeof baseDir !== 'string' || !baseDir.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'baseDir required');
       }
+      // PR #974 round-4 P1: the gate is fail-CLOSED, not fail-open.
+      //
+      // Three branches:
+      //   1. Gate inactive (web-only daemon, no secret ever registered,
+      //      no env-var pinning): accept request as before.
+      //   2. Gate active but secret unavailable (env-var-pinned daemon
+      //      that has not yet received REGISTER_DESKTOP_AUTH, OR a
+      //      daemon-restart edge where the desktop main process holds
+      //      a secret the new daemon process doesn't know about): 503
+      //      "desktop auth required; secret not yet registered". The
+      //      renderer cannot bypass by hitting the route directly during
+      //      the desktop's startup window or after a daemon crash, and
+      //      the desktop's own pickAndImport flow can retry.
+      //   3. Gate active with secret registered: require + verify HMAC
+      //      bound to the EXACT request-body baseDir (no `.trim()` here).
+      //      Round-5 (lefarcen P3) closes the binding gap by trimming on
+      //      the DESKTOP side before signing and POSTing, so the desktop-
+      //      signed string, the request body, the HMAC-verified string,
+      //      and the realpath() input are all the same. The daemon side
+      //      retains a defensive `baseDir.trim()` below for *web-mode*
+      //      callers (no HMAC, no desktop trim) where a user-typed path
+      //      with edge whitespace would otherwise fail isAbsolute(); for
+      //      desktop traffic the trim is provably a no-op.
+      let trustedPickerImport = false;
+      if (desktopAuthEverRegistered) {
+        if (desktopAuthSecret == null) {
+          return sendApiError(
+            res,
+            503,
+            'DESKTOP_AUTH_PENDING',
+            'desktop auth required but secret not yet registered',
+            {
+              details: { hint: 'restart desktop or wait for sidecar registration' },
+              retryable: true,
+            },
+          );
+        }
+        const headerValue = req.get(DESKTOP_IMPORT_TOKEN_HEADER);
+        const token = typeof headerValue === 'string' ? headerValue : '';
+        const now = Date.now();
+        pruneExpiredImportNonces(now);
+        const verification = verifyDesktopImportToken(
+          desktopAuthSecret,
+          baseDir,
+          token,
+          now,
+          consumedImportNonces,
+        );
+        if (!verification.ok) {
+          return sendApiError(
+            res,
+            403,
+            'FORBIDDEN',
+            'desktop import token rejected',
+            { details: { reason: verification.reason } },
+          );
+        }
+        consumedImportNonces.set(verification.nonce, verification.exp);
+        trustedPickerImport = true;
+      }
+      // Round-5 (lefarcen P3): defensive trim for *web-mode* callers
+      // where the request body baseDir may carry edge whitespace
+      // (path.isAbsolute("  /foo  ") returns false). Desktop callers
+      // already trim picker output before signing so this is a no-op
+      // for them and HMAC-binding is preserved end-to-end.
       const trimmedInput = baseDir.trim();
       if (!path.isAbsolute(path.normalize(trimmedInput))) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'baseDir must be absolute');
@@ -2723,6 +2980,17 @@ export async function startServer({
           baseDir: normalizedPath,
           importedFrom: 'folder',
           entryFile,
+          // PR #974: stamp the project as trusted-picker-originated when
+          // the import passed the desktop HMAC gate. The desktop main
+          // process refuses to forward `shell.openPath` for folder-imported
+          // projects whose metadata lacks this flag, so renderer JS cannot
+          // turn an existing folder-imported project (or one created
+          // through some future bypass) into an arbitrary file-manager
+          // reveal. Web-only deployments (no secret registered) intentionally
+          // do not stamp this field — there is no `shell.openPath` surface
+          // on browser builds, so the marker only matters where the bridge
+          // exists.
+          ...(trustedPickerImport ? { fromTrustedPicker: true as const } : {}),
         },
         createdAt: now,
         updatedAt: now,
@@ -2749,8 +3017,9 @@ export async function startServer({
     const project = getProject(db, req.params.id);
     if (!project)
       return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'not found');
-    /** @type {import('@open-design/contracts').ProjectResponse} */
-    const body = { project };
+    const resolvedDir = resolveProjectDir(PROJECTS_DIR, project.id, project.metadata);
+    /** @type {import('@open-design/contracts').ProjectDetailResponse} */
+    const body = { project, resolvedDir };
     res.json(body);
   });
 
@@ -2773,6 +3042,20 @@ export async function startServer({
       if (patch.metadata && typeof patch.metadata === 'object') {
         const existing = getProject(db, req.params.id);
         const existingMeta = existing?.metadata;
+        // PR #974: `fromTrustedPicker` is privileged the same way `baseDir`
+        // is. Reject any attempt to acquire or flip it through PATCH; the
+        // import-folder route is the single source of truth. Allow PATCH
+        // bodies that re-spread the existing `true` marker (the linked-
+        // folder UI does that whenever it edits linkedDirs) — only reject
+        // when the incoming value differs from the persisted one. Per
+        // round-7 lefarcen P2.
+        if ('fromTrustedPicker' in patch.metadata
+            && patch.metadata.fromTrustedPicker !== existingMeta?.fromTrustedPicker) {
+          return sendApiError(
+            res, 400, 'BAD_REQUEST',
+            'fromTrustedPicker can only be set via POST /api/import/folder',
+          );
+        }
         if (existingMeta?.baseDir) {
           if ('baseDir' in patch.metadata && patch.metadata.baseDir !== existingMeta.baseDir) {
             return sendApiError(
@@ -2785,6 +3068,12 @@ export async function startServer({
             baseDir: existingMeta.baseDir,
             ...(existingMeta.importedFrom === 'folder'
               ? { importedFrom: 'folder' }
+              : {}),
+            // Preserve the trusted-picker marker when the existing project
+            // had it, so downstream PATCH calls that omit metadata fields
+            // do not silently strip the flag and re-open the bypass.
+            ...(existingMeta.fromTrustedPicker === true
+              ? { fromTrustedPicker: true as const }
               : {}),
           };
         } else if ('baseDir' in patch.metadata) {
@@ -4166,13 +4455,50 @@ export async function startServer({
         return sendApiError(res, 404, 'PROJECT_NOT_FOUND', 'project not found');
       }
 
-      const result = await finalizeDesignPackage(
-        db,
-        PROJECTS_DIR,
-        DESIGN_SYSTEMS_DIR,
-        req.params.id,
-        { apiKey, baseUrl, model, maxTokens },
-      );
+      // Wire the request lifecycle into a server-side AbortController
+      // so that when the client cancels (browser fetch aborts) or
+      // disconnects, the in-flight Anthropic call inside
+      // finalizeDesignPackage is aborted instead of running to
+      // completion in the background and overwriting DESIGN.md after
+      // the UI has returned to idle. mrcfps PR #974 P1 review on
+      // server.ts:3831-3837. Note that an abort fired after the
+      // upstream response has been received but before the atomic
+      // write completes still allows the write to land — the SDK
+      // contract bounds the network round-trip, not the post-network
+      // disk handoff.
+      //
+      // We listen on `res.on('close')` because that is the canonical
+      // event that Express + Node's http server fires when the
+      // underlying socket is destroyed before the response is sent
+      // (undici fetch abort sends TCP RST). `req.on('close')` /
+      // `req.on('aborted')` are also wired as belt-and-braces but
+      // their behaviour varies by Node version when the request body
+      // has already been consumed.
+      const finalizeAbort = new AbortController();
+      const abortFromRequest = (): void => {
+        if (!finalizeAbort.signal.aborted) finalizeAbort.abort();
+      };
+      // `res.on('close')` fires when the response stream ends — either
+      // because `res.end()` was called by the success path or because
+      // the client disconnected before the response was sent. The
+      // alternative `req.on('close')` fires whenever the *request*
+      // stream finishes, which on POST routes happens as soon as
+      // Express body-parser drains the body — i.e. before the route
+      // does any work — so it cannot be used as a disconnect signal.
+      res.on('close', abortFromRequest);
+
+      let result;
+      try {
+        result = await finalizeDesignPackage(
+          db,
+          PROJECTS_DIR,
+          DESIGN_SYSTEMS_DIR,
+          req.params.id,
+          { apiKey, baseUrl, model, maxTokens, signal: finalizeAbort.signal },
+        );
+      } finally {
+        res.off('close', abortFromRequest);
+      }
       res.json(result);
     } catch (err) {
       // Concurrent finalize - the lockfile was already held by another
@@ -4418,7 +4744,7 @@ export async function startServer({
     try {
       const relPath = req.params[0];
       const project = getProject(db, req.params.id);
-      const file = await readProjectFile(PROJECTS_DIR, req.params.id, relPath, project?.metadata);
+
       // PreviewModal loads artifact HTML via srcdoc, giving the iframe Origin: "null".
       // data: URIs, file://, and some sandboxed iframes also send null — all are
       // local-only callers, so this is safe. Real cross-origin sites send a real
@@ -4426,6 +4752,62 @@ export async function startServer({
       if (req.headers.origin === 'null') {
         res.header('Access-Control-Allow-Origin', '*');
       }
+
+      // Stat the file first without buffering so we can choose the right path.
+      const meta = await resolveProjectFilePath(
+        PROJECTS_DIR,
+        req.params.id,
+        relPath,
+        project?.metadata,
+      );
+
+      // Stream video/audio with HTTP 206 Partial Content support (RFC 7233).
+      // The inline VideoViewer and AudioViewer components fetch this route;
+      // browsers require Accept-Ranges + 206 responses to play and seek media.
+      if (meta.mime.startsWith('video/') || meta.mime.startsWith('audio/')) {
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Type', meta.mime);
+
+        if (meta.size === 0) {
+          res.setHeader('Content-Length', '0');
+          return res.status(200).end();
+        }
+
+        const range = parseByteRange(req.headers.range, meta.size);
+
+        if (range === 'unsatisfiable') {
+          res.setHeader('Content-Range', `bytes */${meta.size}`);
+          return res.status(416).end();
+        }
+
+        let start, end, statusCode;
+        if (range) {
+          ({ start, end } = range);
+          statusCode = 206;
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${meta.size}`);
+          res.setHeader('Content-Length', String(end - start + 1));
+        } else {
+          start = 0;
+          end = meta.size - 1;
+          statusCode = 200;
+          res.setHeader('Content-Length', String(meta.size));
+        }
+
+        res.status(statusCode);
+        const stream = fs.createReadStream(meta.filePath, { start, end });
+        stream.on('error', (streamErr) => {
+          if (!res.headersSent) {
+            sendApiError(res, 500, 'STREAM_ERROR', String(streamErr));
+          } else {
+            res.destroy(streamErr);
+          }
+        });
+        stream.pipe(res);
+        return;
+      }
+
+      // Non-media files: read into buffer (existing behaviour).
+      const file = await readProjectFile(PROJECTS_DIR, req.params.id, relPath, project?.metadata);
       res.type(file.mime).send(file.buffer);
     } catch (err) {
       const status = err && err.code === 'ENOENT' ? 404 : 400;
@@ -4521,6 +4903,63 @@ export async function startServer({
   app.get('/api/projects/:id/files/*', async (req, res) => {
     try {
       const project = getProject(db, req.params.id);
+
+      // Resolve path + stat without reading content so we can decide whether
+      // to stream (media) or buffer (everything else).
+      const meta = await resolveProjectFilePath(
+        PROJECTS_DIR,
+        req.params.id,
+        req.params[0],
+        project?.metadata,
+      );
+
+      // Stream video and audio with HTTP 206 Partial Content support (RFC 7233).
+      // Browsers require range responses to seek/scrub media; buffering the
+      // whole file into memory would also block the process on large videos.
+      if (meta.mime.startsWith('video/') || meta.mime.startsWith('audio/')) {
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Type', meta.mime);
+
+        // Empty file edge case: nothing to range over.
+        if (meta.size === 0) {
+          res.setHeader('Content-Length', '0');
+          return res.status(200).end();
+        }
+
+        const range = parseByteRange(req.headers.range, meta.size);
+
+        if (range === 'unsatisfiable') {
+          res.setHeader('Content-Range', `bytes */${meta.size}`);
+          return res.status(416).end();
+        }
+
+        let start, end, statusCode;
+        if (range) {
+          ({ start, end } = range);
+          statusCode = 206;
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${meta.size}`);
+          res.setHeader('Content-Length', String(end - start + 1));
+        } else {
+          start = 0;
+          end = meta.size - 1;
+          statusCode = 200;
+          res.setHeader('Content-Length', String(meta.size));
+        }
+
+        res.status(statusCode);
+        const stream = fs.createReadStream(meta.filePath, { start, end });
+        stream.on('error', (streamErr) => {
+          if (!res.headersSent) {
+            sendApiError(res, 500, 'STREAM_ERROR', String(streamErr));
+          } else {
+            res.destroy(streamErr);
+          }
+        });
+        stream.pipe(res);
+        return;
+      }
+
+      // Non-media files: read into buffer (existing behaviour).
       const file = await readProjectFile(
         PROJECTS_DIR,
         req.params.id,
@@ -5482,6 +5921,7 @@ export async function startServer({
     const prompt = composeSystemPrompt({
       agentId,
       includeCodexImagegenOverride: false,
+      streamFormat,
       skillBody,
       skillName,
       skillMode,

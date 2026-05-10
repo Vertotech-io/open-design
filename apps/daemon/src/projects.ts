@@ -357,6 +357,23 @@ export async function readProjectFile(projectsRoot, projectId, name, metadata?) 
   };
 }
 
+// Like readProjectFile but skips loading the file content into memory.
+// Used by the media streaming endpoint so large video files are never buffered.
+export async function resolveProjectFilePath(projectsRoot, projectId, name, metadata?) {
+  const dir = resolveProjectDir(projectsRoot, projectId, metadata);
+  const file = await resolveSafeReal(dir, name);
+  const st = await stat(file);
+  const rel = toProjectPath(path.relative(dir, file));
+  return {
+    filePath: file,
+    name: rel,
+    size: st.size,
+    mtime: st.mtimeMs,
+    mime: mimeFor(rel),
+    kind: kindFor(rel),
+  };
+}
+
 export async function writeProjectFile(
   projectsRoot,
   projectId,
@@ -776,6 +793,44 @@ const EXT_MIME = {
 export function mimeFor(name) {
   const ext = path.extname(name).toLowerCase();
   return EXT_MIME[ext] || 'application/octet-stream';
+}
+
+// Parses an HTTP Range header (RFC 7233) for a single byte range.
+// Returns { start, end } for a satisfiable range, 'unsatisfiable' for a
+// 416-class range, or null if the header is absent/malformed/multi-range
+// (callers fall back to a full 200 response in the null case).
+export function parseByteRange(header, fileSize) {
+  if (!header || !header.startsWith('bytes=')) return null;
+  const spec = header.slice(6).trim();
+  // Multi-range is valid RFC 7233 but uncommon for media; fall back to full.
+  if (spec.includes(',')) return null;
+  const dashIdx = spec.indexOf('-');
+  if (dashIdx === -1) return null;
+  const rawStart = spec.slice(0, dashIdx);
+  const rawEnd = spec.slice(dashIdx + 1);
+  let start, end;
+  if (rawStart === '') {
+    // Suffix range: bytes=-N → last N bytes.
+    const suffix = Number(rawEnd);
+    if (!Number.isFinite(suffix) || !Number.isInteger(suffix) || suffix <= 0) {
+      return 'unsatisfiable';
+    }
+    start = Math.max(0, fileSize - suffix);
+    end = fileSize - 1;
+  } else {
+    start = Number(rawStart);
+    if (!Number.isFinite(start) || !Number.isInteger(start) || start < 0) return null;
+    if (start >= fileSize) return 'unsatisfiable';
+    if (rawEnd === '') {
+      // Open-ended range: bytes=N- → from N to EOF.
+      end = fileSize - 1;
+    } else {
+      end = Number(rawEnd);
+      if (!Number.isFinite(end) || !Number.isInteger(end) || end < start) return null;
+      end = Math.min(end, fileSize - 1); // clamp over-long end
+    }
+  }
+  return { start, end };
 }
 
 export async function searchProjectFiles(projectsRoot, projectId, query, opts = {}) {

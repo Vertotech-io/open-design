@@ -612,6 +612,20 @@ export function App() {
     });
   }, []);
 
+  // PR #974: on Electron, the desktop main process owns the picker and
+  // the import POST atomically (`pickAndImport`). The renderer never
+  // sees the path or the HMAC token; it just receives the same
+  // ImportFolderResponse shape that `importFolderProject` would
+  // produce on web, and the App-level state update is identical.
+  const handleImportFolderResponse = useCallback(async (result: import('@open-design/contracts').ImportFolderResponse) => {
+    setProjects((curr) => [result.project, ...curr.filter((p) => p.id !== result.project.id)]);
+    navigate({
+      kind: 'project',
+      projectId: result.project.id,
+      fileName: result.entryFile,
+    });
+  }, []);
+
   const handleOpenProject = useCallback((id: string) => {
     navigate({ kind: 'project', projectId: id, fileName: null });
   }, []);
@@ -641,7 +655,7 @@ export function App() {
         p.id === projectId ? { ...p, pendingPrompt: undefined } : p,
       ),
     );
-    void patchProject(projectId, { pendingPrompt: undefined });
+    void patchProject(projectId, { pendingPrompt: null });
   }, [route]);
 
   const handleTouchProject = useCallback(() => {
@@ -814,6 +828,7 @@ export function App() {
           onCreateProject={handleCreateProject}
           onImportClaudeDesign={handleImportClaudeDesign}
           onImportFolder={handleImportFolder}
+          onImportFolderResponse={handleImportFolderResponse}
           onOpenProject={handleOpenProject}
           onOpenLiveArtifact={handleOpenLiveArtifact}
           onDeleteProject={handleDeleteProject}

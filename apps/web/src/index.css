@@ -262,9 +262,18 @@ code {
 /* -------- App shell ------------------------------------------------- */
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  /* Three rows: chrome header (auto, fixed at 40px), optional
+   * project-actions toolbar (auto — collapses to 0 when hidden),
+   * and the chat/workspace split (1fr — fills the remaining
+   * viewport). The split gets explicit `grid-row: 3` below so the
+   * layout works whether the toolbar is rendered or returns null
+   * (workspace-focused mode). */
+  grid-template-rows: auto auto 1fr;
   height: 100vh;
   background: var(--bg-app);
+}
+.app > .split {
+  grid-row: 3;
 }
 
 .app-chrome-header {
@@ -4534,6 +4543,9 @@ code {
   overflow-y: auto;
   padding: 4px;
 }
+.ds-picker-list-design-systems {
+  min-height: 120px;
+}
 .ds-picker-empty {
   padding: 16px 12px;
   font-size: 12px;
@@ -4689,6 +4701,7 @@ code {
 .entry-side-foot-row .foot-pill-follow {
   flex: 0 1 auto;
 }
+.entry-side-foot-row .foot-pill-pet-label,
 .entry-side-foot-row .foot-pill-follow-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -7223,6 +7236,39 @@ button.connector-action.is-loading {
   overflow-y: auto;
   padding: 12px 0 0;
 }
+.df-group-toggle {
+  margin: 0 20px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.df-group-toggle > span {
+  padding: 0 6px 0 4px;
+  color: var(--text-faint);
+}
+.df-group-toggle button {
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.df-group-toggle button:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.df-group-toggle button.active {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  color: var(--text);
+}
 .df-section { display: flex; flex-direction: column; gap: 0; }
 .df-section + .df-section { margin-top: 6px; }
 .df-section-label {
@@ -7232,6 +7278,34 @@ button.connector-action.is-loading {
   color: var(--text-faint);
   font-weight: 600;
   padding: 12px 20px 6px;
+}
+.df-section-toggle {
+  width: auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.df-section-toggle:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.df-section-toggle span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.df-section-row td {
+  padding: 10px 20px 4px;
+  border-top: 1px solid var(--border);
+}
+.df-section-row:first-child td {
+  border-top: none;
 }
 .df-section-count {
   margin-left: 8px;
@@ -14930,8 +15004,13 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   gap: 8px;
 }
 .mcp-picker-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
+  padding: 0;
+  box-sizing: border-box;
   font-size: 14px;
   line-height: 1;
   border-radius: var(--radius-sm);
@@ -15378,6 +15457,352 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 }
 .mcp-oauth-fallback .md-link:hover {
   text-decoration-thickness: 2px;
+}
+
+.mcp-json-helper {
+	margin-top: 10px;
+
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+
+	background: var(--bg-subtle);
+
+	overflow: hidden;
+}
+
+.mcp-json-helper-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-muted);
+  cursor: pointer;
+
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.mcp-json-helper-toggle:hover {
+  color: var(--text);
+  background: transparent;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 30%, transparent);
+}
+
+.mcp-json-helper.is-open .mcp-json-helper-toggle {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.mcp-json-helper.is-open .mcp-json-helper-toggle:hover {
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.mcp-json-helper-toggle span:first-child {
+	text-align: left;
+}
+
+.mcp-json-helper-toggle-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+
+	flex-shrink: 0;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-example {
+	display: flex;
+	flex-direction: column;
+}
+
+.mcp-json-helper-example-head {
+	padding: 10px 12px 0;
+
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-code {
+	margin: 0 12px 12px;
+
+	padding: 14px;
+
+	border: 1px solid var(--border);
+	border-radius: calc(var(--radius) - 4px);
+
+	background:
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--bg) 92%, black) 0%,
+			color-mix(in srgb, var(--bg) 86%, black) 100%
+		);
+
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 1.7;
+
+	color: var(--text);
+
+	overflow-x: auto;
+}
+
+.mcp-json-helper-code code {
+	background: transparent;
+	padding: 0;
+	border-radius: 0;
+}
+
+.json-key {
+	color: var(--accent);
+}
+
+.json-string {
+	color: var(--green);
+}
+
+.json-punctuation {
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-conversion {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+
+	padding: 12px;
+
+	border-top: 1px solid var(--border);
+
+	background: transparent;
+}
+
+.mcp-json-helper-conversion div {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.mcp-json-helper-conversion strong {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+
+	color: var(--text-soft);
+}
+
+.mcp-json-helper-conversion code {
+	width: fit-content;
+}
+
+.mcp-json-helper-toggle-content {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+
+	min-width: 0;
+	flex: 1;
+}
+
+.mcp-json-helper-eye {
+	width: 22px;
+	height: 22px;
+
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+
+	border-radius: 999px;
+
+	background: var(--accent-tint);
+
+	color: var(--accent);
+
+	flex-shrink: 0;
+}
+
+.mcp-json-helper-toggle-text {
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 1.5;
+
+	color: inherit;
+
+	text-align: left;
+}
+
+/* ----- Project actions toolbar (#451) ---------------------------------- */
+/* Project-scoped actions live in their own bar between the chrome header
+ * and the chat/workspace split. File-scoped actions stay inside
+ * FileViewer's share menu. */
+.project-actions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle, var(--bg));
+  min-height: 40px;
+  flex-wrap: wrap;
+}
+.project-actions-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-strong, var(--text));
+  cursor: pointer;
+}
+.project-actions-button:hover:not(:disabled) {
+  background: var(--bg-subtle, var(--bg));
+}
+.project-actions-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.project-actions-button-primary {
+  background: var(--accent);
+  color: var(--accent-text, white);
+  border-color: var(--accent);
+}
+.project-actions-button-primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+  background: var(--accent);
+}
+.project-actions-button-warning {
+  border-color: var(--warning, #d97706);
+  color: var(--warning, #d97706);
+}
+.project-actions-button-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.project-actions-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: project-actions-spin 0.8s linear infinite;
+}
+@keyframes project-actions-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.project-actions-label {
+  font-size: 12.5px;
+  color: var(--text-strong, var(--text));
+}
+.project-actions-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.project-actions-button-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.project-actions-chip {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning, #d97706) 14%, transparent);
+  color: var(--warning, #d97706);
+}
+.project-actions-disabled-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ----- Toast (#451) ---------------------------------------------------- */
+/* Single transient bottom-center toast for project-scoped actions. */
+.od-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 480px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--text-strong, #1f2328);
+  color: var(--bg, white);
+  font-size: 12.5px;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+  pointer-events: auto;
+}
+.od-toast-message {
+  font-weight: 500;
+}
+.od-toast-details {
+  margin-top: 4px;
+  font-size: 11.5px;
+  opacity: 0.85;
+  font-weight: 400;
+}
+.od-toast-code {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  background: rgba(255, 255, 255, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+  user-select: text;
+}
+.od-toast-dismiss {
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--bg, white);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+.od-toast-dismiss:hover {
+  background: rgba(255, 255, 255, 0.18);
 }
 
 /* ---------------- Routines (Settings → Routines) ---------------- */

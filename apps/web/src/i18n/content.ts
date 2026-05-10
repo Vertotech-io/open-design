@@ -334,6 +334,7 @@ const DE_DESIGN_SYSTEM_SUMMARIES: Record<string, string> = {
   wise: 'Geldtransfer. Leuchtend grüner Akzent, freundlich und klar.',
   'x-ai': 'Elon Musks AI-Lab. Strenger Monochrom-Look, futuristischer Minimalismus.',
   xiaohongshu: 'Lifestyle-UGC-Social-Plattform. Singuläres Brand-Rot, großzügiger Radius, content-first.',
+  wechat: 'WeChat Mini Programs. Frisches Grün (#07C160), PingFang SC, Chat-Bubble-UI, Tab-Leiste.',
   zapier: 'Automatisierungsplattform. Warmes Orange, freundlich illustrationsgetrieben.',
 };
 
@@ -353,6 +354,7 @@ const DE_DESIGN_SYSTEM_CATEGORIES: Record<string, string> = {
   'Fintech & Crypto': 'Fintech & Krypto',
   'E-Commerce & Retail': 'E-Commerce & Handel',
   'Media & Consumer': 'Medien & Consumer',
+  'Social & Messaging': 'Social & Messaging',
   Automotive: 'Automotive',
   'Editorial & Print': 'Editorial & Print',
   'Editorial · Studio': 'Editorial · Studio',
@@ -407,6 +409,7 @@ const DE_SKILL_IDS_WITH_EN_FALLBACK = [
   'ib-pitch-book',
   'last30days',
   'live-dashboard',
+  'login-flow',
   'orbit-general',
   'orbit-github',
   'orbit-gmail',
@@ -508,6 +511,7 @@ const DE_DESIGN_SYSTEM_IDS_WITH_EN_FALLBACK = [
   'vibrant',
   'vintage',
   'webex',
+  'wechat',
 ] as const;
 
 const DE_PROMPT_TEMPLATE_CATEGORIES: Record<string, string> = {

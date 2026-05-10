@@ -42,14 +42,7 @@ import type {
 } from '../types';
 import type { ArtifactManifest } from '../artifacts/types';
 
-declare global {
-  interface Window {
-    electronAPI?: {
-      openExternal?: (url: string) => Promise<boolean>;
-      pickFolder?: () => Promise<string | null>;
-    };
-  }
-}
+// Window.electronAPI is declared globally in apps/web/src/types/electron.d.ts.
 
 export const DEFAULT_DEPLOY_PROVIDER_ID = 'vercel-self';
 export const CLOUDFLARE_PAGES_PROVIDER_ID = 'cloudflare-pages';
@@ -365,8 +358,21 @@ export async function connectConnector(connectorId: string): Promise<ConnectorAc
           return { connector: json.connector ?? null, error: popupBlockedMessage() };
         }
       }
+    } else if (json.auth?.kind === 'connected') {
+      renderConnectorAuthInfo(authWindow, {
+        title: 'Already connected',
+        body: 'This connector is already authorized. You can close this window.',
+      });
+    } else if (json.auth?.kind === 'pending') {
+      renderConnectorAuthInfo(authWindow, {
+        title: 'Authorization pending',
+        body: 'Authorization is in progress but no redirect URL was returned. Watch for an email confirmation, or open the Composio dashboard to continue.',
+      });
     } else {
-      authWindow?.close();
+      renderConnectorAuthInfo(authWindow, {
+        title: 'No authorization URL returned',
+        body: 'The connector responded without a redirect URL. If this seems wrong, retry from Settings → Connectors, and confirm your Composio API key.',
+      });
     }
     return { connector: json.connector ?? null, ...(json.auth === undefined ? {} : { auth: json.auth }) };
   } catch (err) {
@@ -421,6 +427,23 @@ function renderConnectorAuthLoading(authWindow: Window | null, copy: { title: st
           <div style="max-width:300px;color:rgba(246,247,251,.72);font-size:13px;line-height:1.5;">${escapeHtmlText(copy.body)}</div>
         </div>
         <style>@keyframes od-spin{to{transform:rotate(360deg)}}</style>
+      </main>
+    `;
+  } catch {
+    /* Popup may be unavailable or already navigated; ignore. */
+  }
+}
+
+function renderConnectorAuthInfo(authWindow: Window | null, copy: { title: string; body: string }): void {
+  if (!authWindow) return;
+  try {
+    authWindow.document.title = copy.title;
+    authWindow.document.body.innerHTML = `
+      <main style="min-height:100vh;display:grid;place-items:center;margin:0;background:#0f1115;color:#f6f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+        <div style="display:grid;gap:14px;justify-items:center;text-align:center;padding:32px;">
+          <div style="font-size:15px;font-weight:600;">${escapeHtmlText(copy.title)}</div>
+          <div style="max-width:360px;color:rgba(246,247,251,.72);font-size:13px;line-height:1.5;">${escapeHtmlText(copy.body)}</div>
+        </div>
       </main>
     `;
   } catch {
