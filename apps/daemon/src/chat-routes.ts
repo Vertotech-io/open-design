@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import type { RouteDeps } from './server-context.js';
+import { validateBaseUrlResolved } from './connectionTest.js';
 
 export interface RegisterChatRoutesDeps extends RouteDeps<'db' | 'design' | 'http' | 'chat' | 'agents' | 'critique' | 'validation' | 'lifecycle'> {}
 
@@ -41,7 +42,6 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     critiqueResponseCapBytes,
     critiqueRunRegistry,
   } = ctx.critique;
-  const { validateBaseUrl } = ctx.validation;
   const isDaemonShuttingDown = ctx.lifecycle?.isDaemonShuttingDown ?? (() => false);
   app.post('/api/runs', (req, res) => {
     if (isDaemonShuttingDown()) {
@@ -319,8 +319,13 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
   const redactAuthTokens = (text: string) =>
     text.replace(/Bearer [A-Za-z0-9_\-.+/=]+/g, 'Bearer [REDACTED]');
 
+  // DNS-aware wrapper. The sync `validateBaseUrl` only inspects the literal
+  // hostname string, so a public DNS name pointing at an internal address
+  // (`internal.example.com → 10.0.0.5`) still passes. We delegate to
+  // `validateBaseUrlResolved` here so every proxy/stream handler runs the
+  // same resolved-IP check before issuing the upstream request.
   const validateExternalApiBaseUrl = (baseUrl: string) => {
-    return validateBaseUrl(baseUrl);
+    return validateBaseUrlResolved(baseUrl);
   };
 
   const proxyErrorCode = (status: number) => {
@@ -513,7 +518,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       );
     }
 
-    const validated = validateExternalApiBaseUrl(baseUrl);
+    const validated = await validateExternalApiBaseUrl(baseUrl);
     if (validated.error) {
       return sendApiError(
         res,
@@ -525,7 +530,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
 
     const url = appendVersionedApiPath(baseUrl, '/messages');
     console.log(
-      `[proxy:anthropic] ${req.method} ${validated.parsed.hostname} model=${model}`,
+      `[proxy:anthropic] ${req.method} ${validated.parsed!.hostname} model=${model}`,
     );
 
     const payload: any = {
@@ -608,7 +613,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       );
     }
 
-    const validated = validateExternalApiBaseUrl(baseUrl);
+    const validated = await validateExternalApiBaseUrl(baseUrl);
     if (validated.error) {
       return sendApiError(
         res,
@@ -620,7 +625,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
 
     const url = appendVersionedApiPath(baseUrl, '/chat/completions');
     console.log(
-      `[proxy:openai] ${req.method} ${validated.parsed.hostname} model=${model}`,
+      `[proxy:openai] ${req.method} ${validated.parsed!.hostname} model=${model}`,
     );
 
     const payloadMessages = Array.isArray(messages) ? [...messages] : [];
@@ -703,7 +708,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       );
     }
 
-    const validated = validateExternalApiBaseUrl(baseUrl);
+    const validated = await validateExternalApiBaseUrl(baseUrl);
     if (validated.error) {
       return sendApiError(
         res,
@@ -732,7 +737,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
       url.searchParams.set('api-version', version);
     }
     console.log(
-      `[proxy:azure] ${req.method} ${validated.parsed.hostname} deployment=${model} api-version=${version || 'omitted'}`,
+      `[proxy:azure] ${req.method} ${validated.parsed!.hostname} deployment=${model} api-version=${version || 'omitted'}`,
     );
 
     const payloadMessages = Array.isArray(messages) ? [...messages] : [];
@@ -815,7 +820,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     }
 
     const effectiveBaseUrl = baseUrl || 'https://generativelanguage.googleapis.com';
-    const validated = validateExternalApiBaseUrl(effectiveBaseUrl);
+    const validated = await validateExternalApiBaseUrl(effectiveBaseUrl);
     if (validated.error) {
       return sendApiError(
         res,
@@ -828,7 +833,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     const clean = effectiveBaseUrl.replace(/\/+$/, '');
     const url = `${clean}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     console.log(
-      `[proxy:google] ${req.method} ${validated.parsed.hostname} model=${model}`,
+      `[proxy:google] ${req.method} ${validated.parsed!.hostname} model=${model}`,
     );
 
     const contents = (Array.isArray(messages) ? messages : []).map((message) => ({
@@ -908,7 +913,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
     }
 
     const effectiveBaseUrl = baseUrl || 'https://ollama.com';
-    const validated = validateExternalApiBaseUrl(effectiveBaseUrl);
+    const validated = await validateExternalApiBaseUrl(effectiveBaseUrl);
     if (validated.error) {
       return sendApiError(
         res,
@@ -920,7 +925,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
 
     const clean = effectiveBaseUrl.replace(/\/+$/, '').replace(/\/api\/?$/, '');
     const url = `${clean}/api/chat`;
-    console.log(`[proxy:ollama] ${req.method} ${validated.parsed.hostname} model=${model}`);
+    console.log(`[proxy:ollama] ${req.method} ${validated.parsed!.hostname} model=${model}`);
 
     const payloadMessages = Array.isArray(messages) ? [...messages] : [];
     if (typeof systemPrompt === 'string' && systemPrompt) {
@@ -939,6 +944,7 @@ export function registerChatRoutes(app: Express, ctx: RegisterChatRoutesDeps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(payload),
+        redirect: 'error',
       });
 
       if (!response.ok) {
