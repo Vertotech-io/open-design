@@ -874,21 +874,19 @@ export function ProjectView({
   ]);
 
   const persistMessage = useCallback(
-    (m: ChatMessage, options?: SaveMessageOptions) => {
-      if (!activeConversationId) return;
-      void saveMessage(project.id, activeConversationId, m, options);
+    (m: ChatMessage, options?: SaveMessageOptions): Promise<void> => {
+      if (!activeConversationId) return Promise.resolve();
+      return saveMessage(project.id, activeConversationId, m, options);
     },
     [project.id, activeConversationId],
   );
 
   const persistMessageById = useCallback(
-    (messageId: string, options?: SaveMessageOptions) => {
-      if (!activeConversationId) return;
-      setMessages((curr) => {
-        const found = curr.find((m) => m.id === messageId);
-        if (found) void saveMessage(project.id, activeConversationId, found, options);
-        return curr;
-      });
+    (messageId: string, options?: SaveMessageOptions): Promise<void> => {
+      if (!activeConversationId) return Promise.resolve();
+      const found = messagesRef.current.find((m) => m.id === messageId);
+      if (!found) return Promise.resolve();
+      return saveMessage(project.id, activeConversationId, found, options);
     },
     [project.id, activeConversationId],
   );
@@ -899,20 +897,21 @@ export function ProjectView({
       updater: (message: ChatMessage) => ChatMessage,
       persist = false,
       persistOptions?: SaveMessageOptions,
-    ) => {
+    ): Promise<void> => {
+      let saved: ChatMessage | null = null;
       setMessages((curr) => {
-        let saved: ChatMessage | null = null;
         const next = curr.map((m) => {
           if (m.id !== messageId) return m;
           const updated = updater(m);
           saved = updated;
           return updated;
         });
-        if (persist && saved && activeConversationId) {
-          void saveMessage(project.id, activeConversationId, saved, persistOptions);
-        }
         return next;
       });
+      if (persist && saved && activeConversationId) {
+        return saveMessage(project.id, activeConversationId, saved, persistOptions);
+      }
+      return Promise.resolve();
     },
     [project.id, activeConversationId],
   );
@@ -1071,13 +1070,13 @@ export function ProjectView({
             persistMessageById(message.id);
           }, 500);
         };
-        const persistNow = (options?: SaveMessageOptions) => {
+        const persistNow = (options?: SaveMessageOptions): Promise<void> => {
           if (persistTimer) {
             clearTimeout(persistTimer);
             persistTimer = null;
           }
           textBuffer.flush();
-          persistMessageById(message.id, options);
+          return persistMessageById(message.id, options);
         };
         const textBuffer = createBufferedTextUpdates({
           updateMessage: (updater) => updateMessageById(message.id, updater),
@@ -1104,7 +1103,7 @@ export function ProjectView({
               textBuffer.flush();
               textBuffer.cancel();
               unregisterTextBuffer();
-              updateMessageById(
+              const saved = updateMessageById(
                 message.id,
                 (prev) => ({ ...prev, runStatus: 'succeeded', endedAt: prev.endedAt ?? Date.now() }),
                 true,
@@ -1115,9 +1114,9 @@ export function ProjectView({
               if (abortRef.current === controller) abortRef.current = null;
               if (cancelRef.current === cancelController) cancelRef.current = null;
               setStreaming(false);
-              persistNow({ telemetryFinalized: true });
+              const persisted = persistNow({ telemetryFinalized: true });
               void refreshProjectFiles();
-              onProjectsRefresh();
+              void Promise.allSettled([saved, persisted]).then(() => onProjectsRefresh());
             },
             onError: (err) => {
               textBuffer.flush();
@@ -1125,7 +1124,7 @@ export function ProjectView({
               unregisterTextBuffer();
               setError(err.message);
               appendAssistantErrorEvent(message.id, err.message);
-              updateMessageById(
+              const saved = updateMessageById(
                 message.id,
                 (prev) => ({ ...prev, runStatus: 'failed', endedAt: prev.endedAt ?? Date.now() }),
                 true,
@@ -1136,13 +1135,13 @@ export function ProjectView({
               if (abortRef.current === controller) abortRef.current = null;
               if (cancelRef.current === cancelController) cancelRef.current = null;
               setStreaming(false);
-              persistNow({ telemetryFinalized: true });
-              onProjectsRefresh();
+              const persisted = persistNow({ telemetryFinalized: true });
+              void Promise.allSettled([saved, persisted]).then(() => onProjectsRefresh());
             },
           },
           onRunStatus: (runStatus) => {
             textBuffer.flush();
-            updateMessageById(
+            const saved = updateMessageById(
               message.id,
               (prev) => ({
                 ...prev,
@@ -1151,6 +1150,7 @@ export function ProjectView({
               }),
               true,
             );
+            let persisted: Promise<void> = Promise.resolve();
             if (runStatus === 'canceled') {
               textBuffer.cancel();
               unregisterTextBuffer();
@@ -1160,10 +1160,10 @@ export function ProjectView({
               if (abortRef.current === controller) abortRef.current = null;
               if (cancelRef.current === cancelController) cancelRef.current = null;
               setStreaming(false);
-              persistNow({ telemetryFinalized: true });
+              persisted = persistNow({ telemetryFinalized: true });
             }
             if (isTerminalRunStatus(runStatus)) {
-              onProjectsRefresh();
+              void Promise.allSettled([saved, persisted]).then(() => onProjectsRefresh());
             }
           },
           onRunEventId: (lastRunEventId) => {
@@ -1177,13 +1177,13 @@ export function ProjectView({
               const msg = err instanceof Error ? err.message : String(err);
               setError(msg);
               appendAssistantErrorEvent(message.id, msg);
-              updateMessageById(
+              const saved = updateMessageById(
                 message.id,
                 (prev) => ({ ...prev, runStatus: 'failed', endedAt: prev.endedAt ?? Date.now() }),
                 true,
                 { telemetryFinalized: true },
               );
-              onProjectsRefresh();
+              void saved.then(() => onProjectsRefresh());
             }
           })
           .finally(() => {
@@ -1518,13 +1518,9 @@ export function ProjectView({
           setStreaming(false);
           abortRef.current = null;
           cancelRef.current = null;
-          setMessages((curr) => {
-            const finalized = curr.find((m) => m.id === assistantId);
-            if (finalized) persistMessage(finalized, { telemetryFinalized: true });
-            return curr;
-          });
+          const persisted = persistMessageById(assistantId, { telemetryFinalized: true });
           void refreshProjectFiles();
-          onProjectsRefresh();
+          void persisted.then(() => onProjectsRefresh());
         },
       };
 
@@ -1556,7 +1552,7 @@ export function ProjectView({
             updateMessageById(assistantId, (prev) => ({ ...prev, runId, runStatus: 'queued' }), true);
           },
           onRunStatus: (runStatus) => {
-            updateMessageById(
+            const saved = updateMessageById(
               assistantId,
               (prev) => ({
                 ...prev,
@@ -1567,7 +1563,7 @@ export function ProjectView({
               runStatus === 'canceled' ? { telemetryFinalized: true } : undefined,
             );
             if (isTerminalRunStatus(runStatus)) {
-              onProjectsRefresh();
+              void saved.then(() => onProjectsRefresh());
             }
           },
           onRunEventId: (lastRunEventId) => {
