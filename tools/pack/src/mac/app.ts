@@ -120,6 +120,26 @@ async function buildPrebundledStandaloneRuntime(
   });
 }
 
+async function copyBundledNodeRuntime(paths: MacPaths): Promise<void> {
+  const bundledNodePath = join(paths.resourceRoot, "bin", "node");
+  await mkdir(join(paths.resourceRoot, "bin"), { recursive: true });
+  await cp(process.execPath, bundledNodePath);
+  await chmod(bundledNodePath, 0o755);
+
+  const hostNodeLibRoot = join(dirname(process.execPath), "..", "lib");
+  const hostNodeLibEntries = await readdir(hostNodeLibRoot).catch(() => []);
+  const libnodeEntries = hostNodeLibEntries.filter((entry) =>
+    /^libnode(?:\.\d+)?\.dylib$/.test(entry)
+  );
+  if (libnodeEntries.length === 0) return;
+
+  const bundledLibRoot = join(paths.resourceRoot, "lib");
+  await mkdir(bundledLibRoot, { recursive: true });
+  for (const entry of libnodeEntries) {
+    await cp(join(hostNodeLibRoot, entry), join(bundledLibRoot, entry));
+  }
+}
+
 export async function copyResourceTree(config: ToolPackConfig, paths: MacPaths): Promise<void> {
   await rm(paths.resourceRoot, { force: true, recursive: true });
   await mkdir(paths.resourceRoot, { recursive: true });
@@ -128,9 +148,7 @@ export async function copyResourceTree(config: ToolPackConfig, paths: MacPaths):
     workspaceRoot: config.workspaceRoot,
     resourceRoot: paths.resourceRoot,
   });
-  await mkdir(join(paths.resourceRoot, "bin"), { recursive: true });
-  await cp(process.execPath, join(paths.resourceRoot, "bin", "node"));
-  await chmod(join(paths.resourceRoot, "bin", "node"), 0o755);
+  await copyBundledNodeRuntime(paths);
 }
 
 export async function collectWorkspaceTarballs(

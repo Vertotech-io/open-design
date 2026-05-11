@@ -574,9 +574,19 @@ async function collectMacAdhocSignTargets(appPath) {
   return targets;
 }
 
+async function clearMacCodeSignMetadata(target) {
+  await execFileAsync("xattr", ["-cr", target], {
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  await execFileAsync("xattr", ["-c", target], {
+    maxBuffer: 20 * 1024 * 1024,
+  });
+}
+
 async function signMacAdhocBundle(appPath) {
   const targets = await collectMacAdhocSignTargets(appPath);
   for (const target of targets) {
+    await clearMacCodeSignMetadata(target);
     await execFileAsync("codesign", ["--force", "--sign", "-", "--timestamp=none", target], {
       maxBuffer: 20 * 1024 * 1024,
     });

@@ -133,6 +133,8 @@ export interface AgentRefreshOptions {
 
 const SUGGESTED_MODELS_BY_PROTOCOL = {
   anthropic: [
+    'claude-opus-4-7',
+    'claude-sonnet-4-6',
     'claude-opus-4-5',
     'claude-sonnet-4-5',
     'claude-haiku-4-5',
@@ -150,6 +152,9 @@ const SUGGESTED_MODELS_BY_PROTOCOL = {
     'mimo-v2.5-pro',
   ],
   openai: [
+    'gpt-5.5',
+    'gpt-5-codex',
+    'gpt-5',
     'gpt-4o',
     'gpt-4o-mini',
     'o3',
@@ -213,6 +218,9 @@ const SUGGESTED_MODELS_BY_PROTOCOL = {
     'gpt-4o-mini',
   ],
   google: [
+    'gemini-3.1-pro-preview',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     'gemini-1.5-pro',
