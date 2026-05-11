@@ -1044,6 +1044,7 @@ export function ProjectView({
             true,
           );
           completedReattachRunsRef.current.add(runId);
+          onProjectsRefresh();
           continue;
         }
         updateMessageById(
@@ -1136,6 +1137,7 @@ export function ProjectView({
               if (cancelRef.current === cancelController) cancelRef.current = null;
               setStreaming(false);
               persistNow({ telemetryFinalized: true });
+              onProjectsRefresh();
             },
           },
           onRunStatus: (runStatus) => {
@@ -1160,6 +1162,9 @@ export function ProjectView({
               setStreaming(false);
               persistNow({ telemetryFinalized: true });
             }
+            if (isTerminalRunStatus(runStatus)) {
+              onProjectsRefresh();
+            }
           },
           onRunEventId: (lastRunEventId) => {
             textBuffer.flush();
@@ -1178,6 +1183,7 @@ export function ProjectView({
                 true,
                 { telemetryFinalized: true },
               );
+              onProjectsRefresh();
             }
           })
           .finally(() => {
@@ -1518,6 +1524,7 @@ export function ProjectView({
             return curr;
           });
           void refreshProjectFiles();
+          onProjectsRefresh();
         },
       };
 
@@ -1559,6 +1566,9 @@ export function ProjectView({
               true,
               runStatus === 'canceled' ? { telemetryFinalized: true } : undefined,
             );
+            if (isTerminalRunStatus(runStatus)) {
+              onProjectsRefresh();
+            }
           },
           onRunEventId: (lastRunEventId) => {
             updateMessageById(assistantId, (prev) => ({ ...prev, lastRunEventId }));
