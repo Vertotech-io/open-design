@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { ManualEditPanel, emptyManualEditDraft, manualEditPatchSummary } from '../../src/components/ManualEditPanel';
-import type { ManualEditTarget } from '../../src/edit-mode/types';
+import { emptyManualEditStyles, type ManualEditTarget } from '../../src/edit-mode/types';
 
 const target: ManualEditTarget = {
   id: 'hero-title',
@@ -15,19 +15,7 @@ const target: ManualEditTarget = {
   rect: { x: 0, y: 0, width: 120, height: 40 },
   fields: { text: 'Original' },
   attributes: { 'data-od-id': 'hero-title' },
-  styles: {
-    color: '',
-    backgroundColor: '',
-    fontSize: '',
-    fontWeight: '',
-    textAlign: '',
-    padding: '',
-    margin: '',
-    borderRadius: '',
-    border: '',
-    width: '',
-    minHeight: '',
-  },
+  styles: emptyManualEditStyles(),
   outerHtml: '<h1 data-od-id="hero-title">Original</h1>',
 };
 
@@ -55,40 +43,68 @@ describe('ManualEditPanel', () => {
     Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT');
   });
 
-  it('opens with target metadata and calls selection from the layers rail', () => {
-    const onSelectTarget = vi.fn();
-    renderPanel({ onSelectTarget });
+  it('renders the style inspector without the advanced editor entry', () => {
+    renderPanel();
 
-    expect(host.textContent).toContain('Hero Title');
-    expect(host.textContent).toContain('hero-title');
-
-    click(buttonByText('Hero Title'));
-
-    expect(onSelectTarget).toHaveBeenCalledWith(target);
+    expect(host.textContent).toContain('TYPOGRAPHY');
+    expect(host.textContent).not.toContain('Advanced');
+    expect(host.textContent).not.toContain('Content');
   });
 
-  it('builds content patches from the active target', () => {
-    const onApplyPatch = vi.fn();
-    renderPanel({ onApplyPatch });
+  it('normalizes font stacks and writes a usable font-family value', () => {
+    const onDraftChange = vi.fn();
+    renderPanel({
+      onDraftChange,
+      styles: {
+        ...emptyManualEditStyles(),
+        fontFamily: '"Roboto", sans-serif',
+      },
+    });
 
-    click(buttonByText('Apply Content'));
+    const fontSelect = host.querySelector('select') as HTMLSelectElement | null;
+    if (!fontSelect) throw new Error('Font select not found');
+    expect(fontSelect.value).toBe('Roboto, Arial, sans-serif');
 
-    expect(onApplyPatch).toHaveBeenCalledWith(
-      { id: 'hero-title', kind: 'set-text', value: 'Updated copy' },
-      'Content: Hero Title',
-    );
+    act(() => {
+      fontSelect.value = 'Georgia, serif';
+      fontSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    });
+
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({
+      styles: expect.objectContaining({ fontFamily: 'Georgia, serif' }),
+    }));
   });
 
-  it('shows invalid attribute JSON without applying a write patch', () => {
-    const onApplyPatch = vi.fn();
-    const onError = vi.fn();
-    renderPanel({ onApplyPatch, onError, attributesText: '{bad' });
+  it('does not persist an unchanged target style when the inspector opens', () => {
+    vi.useFakeTimers();
+    try {
+      const onApplyPatch = vi.fn();
+      renderPanel({ onApplyPatch });
 
-    click(buttonByText('Attributes'));
-    click(buttonByText('Apply Attributes'));
+      act(() => {
+        vi.advanceTimersByTime(1600);
+      });
 
-    expect(onError).toHaveBeenCalled();
-    expect(onApplyPatch).not.toHaveBeenCalled();
+      expect(onApplyPatch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not persist unchanged page styles when no target is selected', () => {
+    vi.useFakeTimers();
+    try {
+      const onApplyPatch = vi.fn();
+      renderPanel({ onApplyPatch, selectedTarget: null });
+
+      act(() => {
+        vi.advanceTimersByTime(1600);
+      });
+
+      expect(onApplyPatch).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('summarizes full-source history entries without rendering the full file', () => {
@@ -101,34 +117,39 @@ describe('ManualEditPanel', () => {
   });
 
   function renderPanel({
-    onSelectTarget = vi.fn(),
+    onDraftChange = vi.fn(),
     onApplyPatch = vi.fn(),
     onError = vi.fn(),
     attributesText = '{}',
+    selectedTarget = target,
+    styles = emptyManualEditStyles(),
   }: {
-    onSelectTarget?: ReturnType<typeof vi.fn>;
+    onDraftChange?: ReturnType<typeof vi.fn>;
     onApplyPatch?: ReturnType<typeof vi.fn>;
     onError?: ReturnType<typeof vi.fn>;
     attributesText?: string;
-  }) {
+    selectedTarget?: ManualEditTarget | null;
+    styles?: ReturnType<typeof emptyManualEditStyles>;
+  } = {}) {
     const draft = {
       ...emptyManualEditDraft('<html></html>'),
       text: 'Updated copy',
       attributesText,
+      styles,
       outerHtml: target.outerHtml,
     };
     act(() => {
       root.render(
         <ManualEditPanel
           targets={[target]}
-          selectedTarget={target}
+          selectedTarget={selectedTarget}
           draft={draft}
           history={[]}
           error={null}
           canUndo={false}
           canRedo={false}
-          onSelectTarget={onSelectTarget}
-          onDraftChange={vi.fn()}
+          onSelectTarget={vi.fn()}
+          onDraftChange={onDraftChange}
           onApplyPatch={onApplyPatch}
           onError={onError}
           onCancelDraft={vi.fn()}
@@ -139,16 +160,4 @@ describe('ManualEditPanel', () => {
     });
   }
 
-  function buttonByText(text: string): HTMLButtonElement {
-    const buttons = Array.from(host.querySelectorAll('button'));
-    const button = buttons.find((item) => item.textContent?.includes(text));
-    if (!button) throw new Error(`Button not found: ${text}`);
-    return button as HTMLButtonElement;
-  }
-
-  function click(button: HTMLButtonElement): void {
-    act(() => {
-      button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-    });
-  }
 });

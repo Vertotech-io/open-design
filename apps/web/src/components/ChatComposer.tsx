@@ -16,6 +16,7 @@ import type { AppConfig, ChatAttachment, ChatCommentAttachment, ProjectFile, Pro
 import type { ResearchOptions } from '@open-design/contracts';
 import { Icon } from "./Icon";
 import { BUILT_IN_PETS, CUSTOM_PET_ID, resolveActivePet } from "./pet/pets";
+import { ANNOTATION_EVENT, type AnnotationEventDetail } from "./PreviewDrawOverlay";
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -557,6 +558,35 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
         setUploading(false);
       }
     }
+
+    useEffect(() => {
+      function onAnnotation(e: Event) {
+        const detail = (e as CustomEvent<AnnotationEventDetail>).detail;
+        if (!detail) return;
+        void (async () => {
+          if (detail.file) {
+            const id = await ensureProject();
+            if (!id) return;
+            setUploading(true);
+            try {
+              const result = await uploadProjectFiles(id, [detail.file]);
+              if (result.uploaded.length > 0) {
+                setStaged((s) => [...s, ...result.uploaded]);
+              }
+            } finally {
+              setUploading(false);
+            }
+          }
+          if (detail.note) {
+            setDraft((d) => (d ? `${d}\n${detail.note}` : detail.note));
+            textareaRef.current?.focus();
+          }
+        })();
+      }
+      window.addEventListener(ANNOTATION_EVENT, onAnnotation);
+      return () => window.removeEventListener(ANNOTATION_EVENT, onAnnotation);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [projectId]);
 
     function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
       const items = Array.from(e.clipboardData?.items ?? []);

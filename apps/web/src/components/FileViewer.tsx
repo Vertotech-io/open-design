@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { APP_CHROME_FILE_ACTIONS_ID } from './AppChromeHeader';
 import { MarkdownRenderer, artifactRendererRegistry } from '../artifacts/renderer-registry';
@@ -57,6 +57,8 @@ import type {
   ProjectFile,
 } from '../types';
 import { Icon } from './Icon';
+import { PaletteTweaks, type PaletteId } from './PaletteTweaks';
+import { PreviewDrawOverlay } from './PreviewDrawOverlay';
 import {
   buildBoardCommentAttachments,
   liveSnapshotForComment,
@@ -79,7 +81,7 @@ import {
   readManualEditOuterHtml,
   readManualEditStyles,
 } from '../edit-mode/source-patches';
-import type { ManualEditBridgeMessage, ManualEditHistoryEntry, ManualEditPatch, ManualEditTarget } from '../edit-mode/types';
+import type { ManualEditBridgeMessage, ManualEditHistoryEntry, ManualEditPatch, ManualEditStyles, ManualEditTarget } from '../edit-mode/types';
 import { isRenderableSketchJson, SketchPreview } from './SketchPreview';
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
@@ -780,13 +782,16 @@ export function LiveArtifactViewer({
                 transformOrigin: '0 0',
               }}
             >
-              <iframe
-                ref={iframeRef}
-                data-testid="live-artifact-preview-frame"
-                title={liveArtifact.title}
-                sandbox="allow-scripts allow-popups"
-                src={previewUrl}
-              />
+              <PreviewDrawOverlay>
+                <iframe
+                  ref={iframeRef}
+                  data-testid="live-artifact-preview-frame"
+                  title={liveArtifact.title}
+                  sandbox="allow-scripts allow-popups"
+                  src={previewUrl}
+                  style={{ width: '100%', height: '100%', border: 0 }}
+                />
+              </PreviewDrawOverlay>
             </div>
           </div>
         ) : loading ? (
@@ -2896,12 +2901,15 @@ function ReactComponentViewer({
         {source === null || (mode === 'preview' && !srcDoc) ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
-          <iframe
-            data-testid="react-component-preview-frame"
-            title={file.name}
-            sandbox="allow-scripts"
-            srcDoc={srcDoc}
-          />
+          <PreviewDrawOverlay>
+            <iframe
+              data-testid="react-component-preview-frame"
+              title={file.name}
+              sandbox="allow-scripts"
+              srcDoc={srcDoc}
+              style={{ width: '100%', height: '100%', border: 0 }}
+            />
+          </PreviewDrawOverlay>
         ) : (
           <CodeWithLines text={source} />
         )}
@@ -3064,9 +3072,20 @@ function HtmlViewer({
   const [boardMode, setBoardMode] = useState(false);
   const [boardTool, setBoardTool] = useState<BoardTool>('inspect');
   const [inspectMode, setInspectMode] = useState(false);
+  const [palettePopoverOpen, setPalettePopoverOpen] = useState(false);
+  const [selectedPalette, setSelectedPalette] = useState<PaletteId | null>(null);
+  const [previewPalette, setPreviewPalette] = useState<PaletteId | null>(null);
   // for hint managing hint box state
   const [openHintBox, setOpenHintBox] = useState(true);
-  const [manualEditMode, setManualEditMode] = useState(false);
+  const [manualEditMode, setManualEditModeRaw] = useState(false);
+  const [manualEditFrozenSource, setManualEditFrozenSource] = useState<string | null>(null);
+  const setManualEditMode = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setManualEditModeRaw((prev) => {
+      const value = typeof next === 'function' ? (next as (p: boolean) => boolean)(prev) : next;
+      if (value !== prev && !value) setManualEditFrozenSource(null);
+      return value;
+    });
+  }, []);
   const [manualEditTargets, setManualEditTargets] = useState<ManualEditTarget[]>([]);
   const [selectedManualEditTarget, setSelectedManualEditTarget] = useState<ManualEditTarget | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualEditDraft>(() => emptyManualEditDraft());
@@ -3294,7 +3313,19 @@ function HtmlViewer({
     return /class\s*=\s*['"][^'"]*\bslide\b/i.test(source);
   }, [source]);
   const effectiveDeck = isDeck || looksLikeDeck;
-  const previewSource = inlinedSource ?? source;
+  const livePreviewSource = inlinedSource ?? source;
+  // Freeze the iframe input on the snapshot taken at Edit-mode entry. Any
+  // source rewrite during edit (1.5s debounced set-style patches) stays
+  // invisible to the iframe — live updates flow through od-edit-preview-style
+  // postMessage instead, so the canvas never has to reload.
+  useEffect(() => {
+    if (manualEditMode && manualEditFrozenSource === null && livePreviewSource != null) {
+      setManualEditFrozenSource(livePreviewSource);
+    }
+  }, [manualEditMode, manualEditFrozenSource, livePreviewSource]);
+  const previewSource = (manualEditMode && manualEditFrozenSource !== null)
+    ? manualEditFrozenSource
+    : livePreviewSource;
   // When we URL-load the iframe directly, skip every in-host inlining /
   // srcDoc-rebuilding step. The browser does the asset resolution itself,
   // which is the whole point of the URL-load path.
@@ -3303,6 +3334,7 @@ function HtmlViewer({
     isDeck: effectiveDeck,
     commentMode: boardMode || manualEditMode,
     inspectMode,
+    paletteActive: palettePopoverOpen || selectedPalette !== null,
     forceInline,
   });
   const previewSrcUrl = useMemo(
@@ -3331,8 +3363,10 @@ function HtmlViewer({
       commentBridge: boardMode && !manualEditMode,
       inspectBridge: inspectMode,
       editBridge: manualEditMode,
+      paletteBridge: true,
+      initialPalette: selectedPalette,
     }) : ''),
-    [previewSource, effectiveDeck, projectId, file.name, previewStateKey, boardMode, manualEditMode, inspectMode],
+    [previewSource, effectiveDeck, projectId, file.name, previewStateKey, boardMode, manualEditMode, inspectMode, selectedPalette],
   );
 
   useEffect(() => {
@@ -3368,6 +3402,12 @@ function HtmlViewer({
     win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
   }, [manualEditMode, srcDoc]);
 
+  const previewStyleToIframe = useCallback((id: string, styles: Partial<ManualEditStyles>) => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage({ type: 'od-edit-preview-style', id, styles }, '*');
+  }, []);
+
   function syncBridgeModes() {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
@@ -3380,6 +3420,13 @@ function HtmlViewer({
     if (!win) return;
     win.postMessage({ type: 'od:inspect-mode', enabled: inspectMode }, '*');
   }, [inspectMode, srcDoc]);
+
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    const palette = previewPalette ?? selectedPalette;
+    win.postMessage({ type: 'od:palette', palette }, '*');
+  }, [previewPalette, selectedPalette, srcDoc]);
 
   // Mirror the bridge's `od:comment-targets` broadcast into
   // `liveCommentTargets` whenever EITHER Inspect or Comments mode is
@@ -4426,6 +4473,41 @@ function HtmlViewer({
           ) : null}
         </div>
         <div className="viewer-toolbar-actions">
+          <div className="palette-tweaks-anchor">
+            <button
+              type="button"
+              className={`viewer-action${selectedPalette || palettePopoverOpen ? ' active' : ''}`}
+              data-testid="palette-tweaks-toggle"
+              title="Tweaks"
+              aria-haspopup="dialog"
+              aria-expanded={palettePopoverOpen}
+              onClick={() => setPalettePopoverOpen((v) => !v)}
+            >
+              <Icon name="tweaks" size={13} />
+              <span>Tweaks</span>
+              {selectedPalette ? (
+                <span
+                  className="palette-tweaks-badge"
+                  aria-hidden
+                  style={{
+                    backgroundColor:
+                      selectedPalette === 'coral' ? '#ff5a3c' :
+                      selectedPalette === 'electric' ? '#7c3aed' :
+                      selectedPalette === 'acid-forest' ? '#16a34a' :
+                      selectedPalette === 'risograph' ? '#e11d48' :
+                      '#0a0a0a',
+                  }}
+                />
+              ) : null}
+            </button>
+            <PaletteTweaks
+              open={palettePopoverOpen}
+              selected={selectedPalette}
+              onChange={setSelectedPalette}
+              onPreview={setPreviewPalette}
+              onClose={() => setPalettePopoverOpen(false)}
+            />
+          </div>
           <button
             type="button"
             className={`viewer-toggle${boardMode ? ' active' : ''}`}
@@ -4783,6 +4865,7 @@ function HtmlViewer({
                 busy={manualEditSaving}
                 onSelectTarget={selectManualEditTarget}
                 onDraftChange={setManualEditDraft}
+                onPreviewStyle={previewStyleToIframe}
                 onApplyPatch={(patch, label) => {
                   void applyManualEdit(patch, label);
                 }}
@@ -4807,36 +4890,34 @@ function HtmlViewer({
                   transformOrigin: '0 0',
                 }}
               >
-                {useUrlLoadPreview ? (
-                  <iframe
-                    ref={iframeRef}
-                    data-testid="artifact-preview-frame"
-                    data-od-render-mode="url-load"
-                    title={file.name}
-                    sandbox="allow-scripts"
-                    src={previewSrcUrl}
-                    onLoad={syncBridgeModes}
-                  />
-                ) : (
-                  <iframe
-                    ref={iframeRef}
-                    data-testid="artifact-preview-frame"
-                    data-od-render-mode="srcdoc"
-                    title={file.name}
-                    sandbox="allow-scripts"
-                    srcDoc={srcDoc}
-                    // Re-seeds the iframe-side bridge with the host's
-                    // authoritative inspect override map after each srcdoc
-                    // rebuild, then syncs comment/edit bridge modes.
-                    // URL-loaded iframes have no inspect bridge, so the
-                    // replay handler is intentionally only on the srcDoc
-                    // branch.
-                    onLoad={() => {
-                      replayInspectOverridesToIframe();
-                      syncBridgeModes();
-                    }}
-                  />
-                )}
+                <PreviewDrawOverlay>
+                  {useUrlLoadPreview ? (
+                    <iframe
+                      ref={iframeRef}
+                      data-testid="artifact-preview-frame"
+                      data-od-render-mode="url-load"
+                      title={file.name}
+                      sandbox="allow-scripts"
+                      src={previewSrcUrl}
+                      onLoad={syncBridgeModes}
+                      style={{ width: '100%', height: '100%', border: 0 }}
+                    />
+                  ) : (
+                    <iframe
+                      ref={iframeRef}
+                      data-testid="artifact-preview-frame"
+                      data-od-render-mode="srcdoc"
+                      title={file.name}
+                      sandbox="allow-scripts"
+                      srcDoc={srcDoc}
+                      onLoad={() => {
+                        replayInspectOverridesToIframe();
+                        syncBridgeModes();
+                      }}
+                      style={{ width: '100%', height: '100%', border: 0 }}
+                    />
+                  )}
+                </PreviewDrawOverlay>
               </div>
             </div>
             {boardMode ? (
