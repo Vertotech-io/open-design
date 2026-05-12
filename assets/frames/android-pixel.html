@@ -149,9 +149,26 @@
   <script>
     (function () {
       var qs = new URLSearchParams(location.search);
-      var src = qs.get('screen');
+      var screen = qs.get('screen');
+      var project = qs.get('project');
       var iframe = document.getElementById('screen');
-      if (src) iframe.src = src;
+      
+      if (!screen) return;
+      
+      // If project ID is provided, validate and resolve as project file
+      if (project) {
+        // Validate screen parameter to prevent path traversal
+        // Screen should be a valid file path (alphanumeric, hyphens, underscores, slashes)
+        // and must end with .html
+        if (!/^[a-zA-Z0-9_\/-]+\.html$/.test(screen)) {
+          console.error('Invalid screen path:', screen);
+          return;
+        }
+        iframe.src = '/api/projects/' + encodeURIComponent(project) + '/files/' + screen;
+      } else {
+        // Legacy: treat screen as absolute or relative URL (no validation)
+        iframe.src = screen;
+      }
     })();
   </script>
 </body>

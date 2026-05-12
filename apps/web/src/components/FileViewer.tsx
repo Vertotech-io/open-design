@@ -3234,7 +3234,7 @@ function HtmlViewer({
     commentMode: boardMode || manualEditMode,
     inspectMode,
     forceInline,
-  });
+  }) && !(source && source.includes('{{PROJECT_ID}}'));
   const previewSrcUrl = useMemo(
     () => `${projectRawUrl(projectId, file.name)}?v=${Math.round(file.mtime)}&r=${reloadKey}`,
     [projectId, file.name, file.mtime, reloadKey],
@@ -3261,6 +3261,7 @@ function HtmlViewer({
       commentBridge: boardMode && !manualEditMode,
       inspectBridge: inspectMode,
       editBridge: manualEditMode,
+      projectId,
     }) : ''),
     [previewSource, effectiveDeck, projectId, file.name, previewStateKey, boardMode, manualEditMode, inspectMode],
   );
