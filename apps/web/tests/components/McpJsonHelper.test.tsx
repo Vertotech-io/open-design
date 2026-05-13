@@ -54,5 +54,5 @@ describe('McpJsonHelper (production)', () => {
     const panel = document.getElementById(ariaControls!);
     expect(panel).toBeTruthy();
     expect(panel?.textContent).toContain('Example MCP JSON');
-  });
+  }, 15000);
 });

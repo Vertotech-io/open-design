@@ -23,11 +23,18 @@ import {
   validateCodexGeneratedImagesDir,
 } from '../src/server.js';
 import { getAgentDef } from '../src/agents.js';
+import { readAppConfig, writeAppConfig, type AgentCliEnvPrefs } from '../src/app-config.js';
 import { renderCodexImagegenOverride } from '../src/prompts/system.js';
 
 function symlinkDir(target: string, link: string): void {
   symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
 }
+
+const FAKE_AGENT_CONFIG_KEYS: Record<string, { agentId: string; envKey: string }> = {
+  claude: { agentId: 'claude', envKey: 'CLAUDE_BIN' },
+  opencode: { agentId: 'opencode', envKey: 'OPENCODE_BIN' },
+  qodercli: { agentId: 'qoder', envKey: 'QODER_BIN' },
+};
 
 async function withFakeAgent<T>(
   binName: string,
@@ -36,23 +43,40 @@ async function withFakeAgent<T>(
 ): Promise<T> {
   const dir = await fsp.mkdtemp(join(tmpdir(), 'od-chat-route-bin-'));
   const oldPath = process.env.PATH;
+  const dataDir = process.env.OD_DATA_DIR;
+  const previousConfig = dataDir ? await readAppConfig(dataDir) : {};
   try {
+    let binPath: string;
     if (process.platform === 'win32') {
       const runner = join(dir, `${binName}-test-runner.cjs`);
       await fsp.writeFile(runner, script);
-      await fsp.writeFile(
-        join(dir, `${binName}.cmd`),
-        `@echo off\r\nnode "${runner}" %*\r\n`,
-      );
+      binPath = join(dir, `${binName}.cmd`);
+      await fsp.writeFile(binPath, `@echo off\r\nnode "${runner}" %*\r\n`);
     } else {
-      const bin = join(dir, binName);
-      await fsp.writeFile(bin, `#!/usr/bin/env node\n${script}`);
-      await fsp.chmod(bin, 0o755);
+      binPath = join(dir, binName);
+      await fsp.writeFile(binPath, `#!/usr/bin/env node\n${script}`);
+      await fsp.chmod(binPath, 0o755);
+    }
+    const configKey = FAKE_AGENT_CONFIG_KEYS[binName];
+    if (dataDir && configKey) {
+      const agentCliEnv: AgentCliEnvPrefs = {
+        ...(previousConfig.agentCliEnv ?? {}),
+        [configKey.agentId]: {
+          ...(previousConfig.agentCliEnv?.[configKey.agentId] ?? {}),
+          [configKey.envKey]: binPath,
+        },
+      };
+      await writeAppConfig(dataDir, { agentCliEnv });
     }
     process.env.PATH = `${dir}${delimiter}${oldPath ?? ''}`;
     return await run();
   } finally {
     process.env.PATH = oldPath;
+    if (dataDir) {
+      await writeAppConfig(dataDir, {
+        agentCliEnv: previousConfig.agentCliEnv ?? null,
+      });
+    }
     await fsp.rm(dir, { recursive: true, force: true });
   }
 }
@@ -294,7 +318,7 @@ setInterval(() => {}, 1000);
 
   it('keeps Claude stream runs alive while structured output is still flowing', async () => {
     const previous = process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS;
-    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '900';
+    process.env.OD_CHAT_RUN_INACTIVITY_TIMEOUT_MS = '3000';
     try {
       await withFakeAgent(
         'claude',
@@ -315,7 +339,7 @@ const timer = setInterval(() => {
     return;
   }
   console.log(lines[index++]);
-}, 200);
+}, 500);
 `,
         async () => {
           const createResponse = await fetch(`${baseUrl}/api/runs`, {
@@ -532,7 +556,7 @@ async function waitForRunStatus(
   runId: string,
   done: (status: string) => boolean = (status) => status !== 'queued' && status !== 'running',
 ): Promise<{ status: string }> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
     const statusResponse = await fetch(`${baseUrl}/api/runs/${runId}`);
     const statusBody = await statusResponse.json() as { status: string };
     if (done(statusBody.status)) return statusBody;

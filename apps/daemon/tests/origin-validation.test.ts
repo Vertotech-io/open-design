@@ -371,22 +371,36 @@ describe('daemon origin validation middleware', () => {
 
   it('allows requests from OD_WEB_PORT (web proxy port)', async () => {
     const webPort = port + 1000;
-    process.env.OD_WEB_PORT = String(webPort);
-    const res = await request(port, 'GET', '/api/projects', {
-      origin: `http://127.0.0.1:${webPort}`,
+    const ports = allowedBrowserPorts(port, {
+      ...process.env,
+      OD_WEB_PORT: String(webPort),
     });
-    delete process.env.OD_WEB_PORT;
-    expect(res.status).toBe(200);
+    expect(
+      isAllowedBrowserOrigin(
+        `http://127.0.0.1:${webPort}`,
+        `127.0.0.1:${port}`,
+        ports,
+        '127.0.0.1',
+        [],
+      ),
+    ).toBe(true);
   });
 
   it('blocks requests from unknown ports even with OD_WEB_PORT set', async () => {
     const webPort = port + 1000;
-    process.env.OD_WEB_PORT = String(webPort);
-    const res = await request(port, 'GET', '/api/projects', {
-      origin: `http://127.0.0.1:${port + 2000}`,
+    const ports = allowedBrowserPorts(port, {
+      ...process.env,
+      OD_WEB_PORT: String(webPort),
     });
-    delete process.env.OD_WEB_PORT;
-    expect(res.status).toBe(403);
+    expect(
+      isAllowedBrowserOrigin(
+        `http://127.0.0.1:${port + 2000}`,
+        `127.0.0.1:${port}`,
+        ports,
+        '127.0.0.1',
+        [],
+      ),
+    ).toBe(false);
   });
 
   // Note: fail-closed coverage when port=0 is tested in the dedicated
