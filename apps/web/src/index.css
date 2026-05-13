@@ -18342,7 +18342,6 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   border-radius: var(--radius);
   cursor: pointer;
   transition: background 120ms ease;
-  align-items: flex-start;
 }
 .routines-radio:hover { background: var(--bg-subtle); }
 .routines-radio input { margin-top: 3px; }
