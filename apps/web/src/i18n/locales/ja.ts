@@ -967,6 +967,15 @@ export const ja: Dict = {
   'critiqueTheater.replaySpeedInstant': '即時',
   'critiqueTheater.replaySpeedLive': 'ライブ',
   'critiqueTheater.replaySpeedFast': '高速',
+  'critiqueTheater.settingsNav': 'デザイン陪審',
+  'critiqueTheater.settingsNavHint': 'エージェント実行中の 5 名パネルレビュー',
+  'critiqueTheater.settingsEnabledLabel': 'エージェント実行中にデザイン陪審を表示',
+  'critiqueTheater.settingsEnabledDescription':
+    '有効にすると、エージェント生成中に 5 名のパネルレビューが並走し、出荷前に結果を採点します。いつでも中断できます。',
+  'critiqueTheater.settingsEnabledProjectHint':
+    'このプロジェクトに保存しました。今後の実行はサーバ側でデザイン陪審を通ります。',
+  'critiqueTheater.settingsEnabledNoProjectHint':
+    'サーバ側に保存するにはプロジェクトを開いてください。それまではブラウザ内の設定のみ変更されます。',
 
   'pet.title': 'ペット',
   'pet.tabBuiltIn': '組み込み',
