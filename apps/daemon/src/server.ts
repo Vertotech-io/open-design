@@ -2999,6 +2999,7 @@ export async function startServer({
   });
   registerLiveArtifactRoutes(app, {
     db,
+    design,
     http: httpDeps,
     paths: pathDeps,
     auth: authDeps,
