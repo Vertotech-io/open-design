@@ -850,7 +850,11 @@ code {
 }
 .avatar-item:hover { background: var(--bg-subtle); }
 .avatar-item .avatar-item-icon {
-  width: 18px; text-align: center; color: var(--text-muted); flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  width: 18px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 .avatar-item .avatar-item-meta {
   margin-left: auto;
