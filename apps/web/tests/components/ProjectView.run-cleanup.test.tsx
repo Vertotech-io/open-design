@@ -16,11 +16,13 @@ const getTemplate = vi.fn();
 const fetchChatRunStatus = vi.fn();
 const listActiveChatRuns = vi.fn();
 const reattachDaemonRun = vi.fn();
+const streamViaDaemon = vi.fn();
 const saveMessage = vi.fn();
 const createConversation = vi.fn();
 const patchConversation = vi.fn();
 const patchProject = vi.fn();
 const saveTabs = vi.fn();
+const capturedChatPaneProps: { current: Record<string, unknown> | null } = { current: null };
 
 vi.mock('../../src/i18n', () => ({
   useT: () => ((value: string) => value),
@@ -34,7 +36,7 @@ vi.mock('../../src/providers/daemon', () => ({
   fetchChatRunStatus: (...args: unknown[]) => fetchChatRunStatus(...args),
   listActiveChatRuns: (...args: unknown[]) => listActiveChatRuns(...args),
   reattachDaemonRun: (...args: unknown[]) => reattachDaemonRun(...args),
-  streamViaDaemon: vi.fn(),
+  streamViaDaemon: (...args: unknown[]) => streamViaDaemon(...args),
 }));
 
 vi.mock('../../src/providers/registry', () => ({
@@ -79,7 +81,10 @@ vi.mock('../../src/components/AvatarMenu', () => ({
 }));
 
 vi.mock('../../src/components/ChatPane', () => ({
-  ChatPane: () => null,
+  ChatPane: (props: Record<string, unknown>) => {
+    capturedChatPaneProps.current = props;
+    return null;
+  },
 }));
 
 vi.mock('../../src/components/FileWorkspace', () => ({
@@ -94,6 +99,7 @@ describe('ProjectView daemon cleanup', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    capturedChatPaneProps.current = null;
   });
 
   it('does not abort daemon cancel reattach controllers during unmount cleanup', async () => {
@@ -303,5 +309,175 @@ describe('ProjectView daemon cleanup', () => {
         expect.objectContaining({ telemetryFinalized: true }),
       ),
     );
+  });
+
+  it('delays projects refresh in reattach onError until saveMessage resolves', async () => {
+    const onProjectsRefresh = vi.fn();
+    let capturedHandlers: { onError?: (err: Error) => void } | null = null;
+
+    const pendingResolvers: Array<() => void> = [];
+    saveMessage.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          pendingResolvers.push(resolve);
+        }),
+    );
+
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'working',
+        createdAt: Date.now(),
+        runId: 'run-err',
+        runStatus: 'running',
+      },
+    ]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    fetchChatRunStatus.mockResolvedValue({
+      id: 'run-err',
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      exitCode: null,
+      signal: null,
+    });
+    listActiveChatRuns.mockResolvedValue([]);
+    reattachDaemonRun.mockImplementation(async (options: { handlers: { onError?: (err: Error) => void } }) => {
+      capturedHandlers = options.handlers;
+      return new Promise<void>(() => {});
+    });
+
+    const view = render(
+      <ProjectView
+        project={{ id: 'project-1', name: 'Project', skillId: null, designSystemId: null } as never}
+        routeFileName={null}
+        config={{ mode: 'daemon', agentId: 'agent-1', notifications: undefined, agentModels: {} } as never}
+        agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+        skills={[]}
+        designSystems={[]}
+        daemonLive
+        onModeChange={() => {}}
+        onAgentChange={() => {}}
+        onAgentModelChange={() => {}}
+        onRefreshAgents={() => {}}
+        onOpenSettings={() => {}}
+        onBack={() => {}}
+        onClearPendingPrompt={() => {}}
+        onTouchProject={() => {}}
+        onProjectChange={() => {}}
+        onProjectsRefresh={onProjectsRefresh}
+      />,
+    );
+
+    await waitFor(() => expect(reattachDaemonRun).toHaveBeenCalledTimes(1));
+    const handlers = capturedHandlers as { onError?: (err: Error) => void } | null;
+    if (!handlers?.onError) throw new Error('Expected reattach onError handler to be captured');
+
+    handlers.onError(new Error('ACP response timed out after 180000ms'));
+
+    // saveMessage is still pending — the projects refresh must wait.
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    expect(onProjectsRefresh).not.toHaveBeenCalled();
+    expect(saveMessage).toHaveBeenCalled();
+
+    if (pendingResolvers.length === 0) throw new Error('Expected saveMessage to be invoked');
+    for (const resolve of pendingResolvers) resolve();
+
+    await waitFor(() => expect(onProjectsRefresh).toHaveBeenCalled());
+
+    view.unmount();
+  });
+
+  it('refreshes projects list after new-run terminal onRunStatus events', async () => {
+    const onProjectsRefresh = vi.fn();
+    let capturedStreamOptions:
+      | {
+          handlers: { onError?: (err: Error) => void };
+          onRunStatus?: (status: string) => void;
+          onRunCreated?: (runId: string) => void;
+        }
+      | null = null;
+
+    saveMessage.mockResolvedValue(undefined);
+
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    streamViaDaemon.mockImplementation(async (options: typeof capturedStreamOptions) => {
+      capturedStreamOptions = options;
+      return new Promise<void>(() => {});
+    });
+
+    const view = render(
+      <ProjectView
+        project={{ id: 'project-1', name: 'Project', skillId: null, designSystemId: null } as never}
+        routeFileName={null}
+        config={{ mode: 'daemon', agentId: 'agent-1', notifications: undefined, agentModels: {} } as never}
+        agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+        skills={[]}
+        designSystems={[]}
+        daemonLive
+        onModeChange={() => {}}
+        onAgentChange={() => {}}
+        onAgentModelChange={() => {}}
+        onRefreshAgents={() => {}}
+        onOpenSettings={() => {}}
+        onBack={() => {}}
+        onClearPendingPrompt={() => {}}
+        onTouchProject={() => {}}
+        onProjectChange={() => {}}
+        onProjectsRefresh={onProjectsRefresh}
+      />,
+    );
+
+    await waitFor(() => expect(capturedChatPaneProps.current).not.toBeNull());
+    const props = capturedChatPaneProps.current as Record<string, unknown> | null;
+    if (!props || typeof props.onSend !== 'function') {
+      throw new Error('Expected ChatPane onSend to be available');
+    }
+
+    await (props.onSend as (prompt: string, attachments: unknown[], commentAttachments: unknown[]) => Promise<void>)(
+      'hello',
+      [],
+      [],
+    );
+
+    await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
+    const streamOptions = capturedStreamOptions as
+      | {
+          handlers: { onError?: (err: Error) => void };
+          onRunStatus?: (status: string) => void;
+          onRunCreated?: (runId: string) => void;
+        }
+      | null;
+    if (!streamOptions || typeof streamOptions.onRunStatus !== 'function') {
+      throw new Error('Expected streamViaDaemon to capture onRunStatus');
+    }
+    const onRunStatus = streamOptions.onRunStatus;
+
+    onProjectsRefresh.mockClear();
+    onRunStatus('failed');
+    await waitFor(() => expect(onProjectsRefresh).toHaveBeenCalled());
+
+    onProjectsRefresh.mockClear();
+    onRunStatus('canceled');
+    await waitFor(() => expect(onProjectsRefresh).toHaveBeenCalled());
+
+    view.unmount();
   });
 });
