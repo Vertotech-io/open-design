@@ -68,6 +68,8 @@ OD stands on four open-source shoulders:
 | **Deployable to** | Local (`pnpm tools-dev`) · Vercel web layer · packaged Electron desktop app for macOS (Apple Silicon) and Windows (x64) — download from [open-design.ai](https://open-design.ai/) or the [latest release](https://github.com/nexu-io/open-design/releases) |
 | **License** | Apache-2.0 |
 
+Linux AppImage packaging is available through the optional release lane and is covered by the Linux packaged smoke workflow, but public stable downloads remain gated until the release maintainers enable the Linux stable lane.
+
 [acd2]: https://github.com/VoltAgent/awesome-design-md
 [ads]: https://github.com/bergside/awesome-design-skills
 
