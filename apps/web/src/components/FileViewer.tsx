@@ -59,7 +59,7 @@ import {
 } from '../runtime/exports';
 import { buildReactComponentSrcdoc } from '../runtime/react-component';
 import { buildSrcdoc } from '../runtime/srcdoc';
-import { parseForceInline, shouldUrlLoadHtmlPreview } from './file-viewer-render-mode';
+import { hasTweaksTemplate, parseForceInline, shouldUrlLoadHtmlPreview } from './file-viewer-render-mode';
 import { saveTemplate } from '../state/projects';
 import type {
   LiveArtifactEventItem,
@@ -3712,6 +3712,8 @@ function HtmlViewer({
   const [selectedSideCommentIds, setSelectedSideCommentIds] = useState<Set<string>>(() => new Set());
   const [commentSidePanelCollapsed, setCommentSidePanelCollapsed] = useState(false);
   const [strokePoints, setStrokePoints] = useState<StrokePoint[]>([]);
+  const [tweaksMode, setTweaksMode] = useState(false);
+  const [tweaksAvailable, setTweaksAvailable] = useState(false);
   const previewStateKey = `${projectId}:${file.name}`;
   const previewScale = zoom / 100;
 
@@ -3839,7 +3841,23 @@ function HtmlViewer({
   );
   const [previewBodyRef, previewBodySize] = usePreviewCanvasSize<HTMLDivElement>();
   const overlayPreviewScale = effectivePreviewScale(previewViewport, previewScale, previewBodySize);
+  // We mount both the URL-load and srcDoc iframes side by side so toggling
+  // render mode just flips visibility instead of unmounting + remounting an
+  // iframe (which would reload and visibly flash). `iframeRef` continues to
+  // point at whichever iframe is currently active so the existing postMessage
+  // sites keep working unchanged; receivers use `isOurIframe()` to accept
+  // messages from EITHER iframe, so an inactive but mounted iframe's startup
+  // announcements (e.g. `__edit_mode_available`) are not missed.
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const urlIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const srcdocIframeRef = useRef<HTMLIFrameElement | null>(null);
+  function isOurIframe(source: MessageEventSource | null | undefined): boolean {
+    if (!source) return false;
+    return (
+      source === urlIframeRef.current?.contentWindow ||
+      source === srcdocIframeRef.current?.contentWindow
+    );
+  }
   const shareRef = useRef<HTMLDivElement | null>(null);
   const [chromeActionsHost, setChromeActionsHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -3923,6 +3941,10 @@ function HtmlViewer({
   // When we URL-load the iframe directly, skip every in-host inlining /
   // srcDoc-rebuilding step. The browser does the asset resolution itself,
   // which is the whole point of the URL-load path.
+  // Detect the class based tweaks template so we keep the srcDoc path on
+  // first load: the bridge that emits `od:tweaks-available` is only injected
+  // by buildSrcdoc, never on the URL load iframe.
+  const tweaksBridgeRequired = hasTweaksTemplate(source);
   const useUrlLoadPreview = shouldUrlLoadHtmlPreview({
     mode,
     isDeck: effectiveDeck,
@@ -3930,12 +3952,34 @@ function HtmlViewer({
     inspectMode,
     paletteActive: palettePopoverOpen || selectedPalette !== null,
     drawMode: drawOverlayOpen,
+    tweaksBridge: tweaksBridgeRequired,
     forceInline,
   });
   const previewSrcUrl = useMemo(
     () => `${projectRawUrl(projectId, file.name)}?v=${Math.round(file.mtime)}&r=${reloadKey}`,
     [projectId, file.name, file.mtime, reloadKey],
   );
+  // Keep `iframeRef.current` aligned with whichever iframe is currently
+  // visible so the existing postMessage send sites do not need to know that
+  // there are two iframes mounted. Plain `useEffect` (rather than layout)
+  // because all reads of `iframeRef.current` are in async user handlers or
+  // postMessage callbacks, never synchronous during render, and `useEffect`
+  // does not warn under `renderToStaticMarkup`.
+  useEffect(() => {
+    iframeRef.current = useUrlLoadPreview
+      ? urlIframeRef.current
+      : srcdocIframeRef.current;
+  });
+  // When the render mode flips, the now-active iframe has already loaded
+  // (its `onLoad` fired when it first mounted, often long before the user
+  // toggled), so we manually re-push the current bridge state instead of
+  // relying on the iframe's load event. `syncBridgeModes` is a closure over
+  // the latest state, so reading it through a ref keeps this effect's deps
+  // honest while still firing the up-to-date sync function.
+  const syncBridgeModesRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    syncBridgeModesRef.current();
+  }, [useUrlLoadPreview]);
 
   useEffect(() => {
     setInlinedSource(null);
@@ -3971,7 +4015,7 @@ function HtmlViewer({
     }
     setSlideState(htmlPreviewSlideState.get(previewStateKey) ?? null);
     function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
+      if (!isOurIframe(ev.source)) return;
       const data = ev?.data as
         | { type?: string; active?: number; count?: number }
         | null;
@@ -4025,7 +4069,18 @@ function HtmlViewer({
     }, '*');
     win.postMessage({ type: 'od-edit-mode', enabled: manualEditMode }, '*');
     postSelectedManualEditTargetToIframe(manualEditMode ? selectedManualEditTarget?.id ?? null : null);
+    // Push the toolbar's current `tweaksMode` to both dialects so the artifact
+    // aligns to host state on every load (including render-mode swaps that
+    // expose a different iframe. e.g. opening the Themes popover). Without
+    // this, an artifact that defaults to `open=true` would re-open on every
+    // swap and visually contradict a toolbar that is currently off.
+    win.postMessage({ type: 'od:tweaks-panel-visible', visible: tweaksMode }, '*');
+    win.postMessage({ type: tweaksMode ? '__activate_edit_mode' : '__deactivate_edit_mode' }, '*');
   }
+  // Keep the ref pointing at the latest `syncBridgeModes` closure so the
+  // render-mode-swap effect above (which can fire before this declaration in
+  // execution order) always calls the up-to-date function.
+  syncBridgeModesRef.current = syncBridgeModes;
 
   useEffect(() => {
     const win = iframeRef.current?.contentWindow;
@@ -4057,7 +4112,7 @@ function HtmlViewer({
       return;
     }
     function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
+      if (!isOurIframe(ev.source)) return;
       const data = ev.data as
         | {
             type?: string;
@@ -4093,6 +4148,62 @@ function HtmlViewer({
   }, [inspectMode, boardMode, drawClickSelectionMode, file.name]);
 
   useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    // Send all known dialects so the artifact can pick up whichever it speaks:
+    //  - `od:tweaks-panel-visible` is the bridge protocol used by class-based
+    //    panels emitted from the tweaks skill template (`.tw-panel`).
+    //  - `__activate_edit_mode` / `__deactivate_edit_mode` is the protocol
+    //    agent-generated artifacts use for their own React-mounted `.twk-panel`.
+    // Deps intentionally exclude `srcDoc`: on iframe remount, sync happens via
+    // `syncBridgeModes` (bridge) and the artifact's own
+    // `__edit_mode_available` announcement (postMessage panels).
+    win.postMessage({ type: 'od:tweaks-panel-visible', visible: tweaksMode }, '*');
+    win.postMessage({ type: tweaksMode ? '__activate_edit_mode' : '__deactivate_edit_mode' }, '*');
+  }, [tweaksMode]);
+
+  // Receive tweaks-side state from the iframe. Supports both bridge messages
+  // (`od:tweaks-*` for skill-template artifacts) and the artifact-native
+  // edit-mode protocol (`__edit_mode_*` for agent-generated artifacts). Either
+  // surface controls toolbar availability and mirrors local close into the
+  // toolbar toggle state.
+  useEffect(() => {
+    function onMessage(ev: MessageEvent) {
+      if (!isOurIframe(ev.source)) return;
+      const data = ev.data as { type?: string; available?: boolean; visible?: boolean } | null;
+      if (!data?.type) return;
+      if (data.type === 'od:tweaks-available') {
+        // Scope this to the active iframe only. The hidden srcDoc iframe's
+        // tweaks bridge always evaluates `document.querySelector('.tw-panel')`
+        // and posts `available: false` for agent-protocol (`.twk-panel`)
+        // artifacts that ship no class based panel. Without this guard that
+        // `false` would land after `__edit_mode_available` had already set
+        // `tweaksAvailable = true` and silently disable the toolbar button.
+        // `__edit_mode_*` below stays accepted from either iframe — those
+        // signals carry real artifact intent and must survive render mode
+        // flips.
+        if (ev.source !== iframeRef.current?.contentWindow) return;
+        setTweaksAvailable(!!data.available);
+      } else if (data.type === 'od:tweaks-panel-state') {
+        setTweaksMode(!!data.visible);
+      } else if (data.type === '__edit_mode_available') {
+        // Availability only. Do NOT mirror the artifact's `open=true` default
+        // into `tweaksMode`: iframe remounts (e.g. when the user opens the
+        // Themes popover and the render mode flips to srcDoc) would otherwise
+        // re-announce on every reload and the toolbar toggle would flip back
+        // on without user intent. `syncBridgeModes` separately pushes the
+        // current `tweaksMode` to the artifact on every load so the artifact
+        // matches the toolbar, not the other way around.
+        setTweaksAvailable(true);
+      } else if (data.type === '__edit_mode_dismissed') {
+        setTweaksMode(false);
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  useEffect(() => {
     setActiveCommentTarget(null);
     setHoveredCommentTarget(null);
     setLiveCommentTargets(new Map());
@@ -4114,6 +4225,10 @@ function HtmlViewer({
     setManualEditError(null);
     manualEditPendingStyleRef.current = null;
     clearManualEditStyleTimer();
+    // Stale tweaks state can carry across files (especially toolbar "on" with
+    // no panel underneath). Reset both and let the iframe bridge re-announce.
+    setTweaksMode(false);
+    setTweaksAvailable(false);
   }, [file.name]);
 
   // Selecting a new file or turning inspect off resets the panel target.
@@ -4186,7 +4301,7 @@ function HtmlViewer({
       podMembers: Array.isArray(data.podMembers) ? data.podMembers : undefined,
     });
     function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
+      if (!isOurIframe(ev.source)) return;
       const data = ev.data as (Partial<PreviewCommentSnapshot> & {
         type?: string;
         targets?: Array<Partial<PreviewCommentSnapshot>>;
@@ -4292,7 +4407,7 @@ function HtmlViewer({
       return;
     }
     function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
+      if (!isOurIframe(ev.source)) return;
       const data = ev.data as ManualEditBridgeMessage | null;
       if (!data?.type) return;
       if (data.type === 'od-edit-targets' && Array.isArray(data.targets)) {
@@ -4574,7 +4689,7 @@ function HtmlViewer({
   useEffect(() => {
     if (!inspectMode) return;
     function onMessage(ev: MessageEvent) {
-      if (ev.source !== iframeRef.current?.contentWindow) return;
+      if (!isOurIframe(ev.source)) return;
       const data = ev.data as
         | { type?: string; elementId?: string; selector?: string; label?: string; text?: string; style?: InspectStyleSnapshot }
         | null;
@@ -5232,6 +5347,19 @@ function HtmlViewer({
               </button>
             </span>
           ) : null}
+          <button
+            type="button"
+            className={`viewer-toggle${tweaksMode ? ' on' : ''}`}
+            title={tweaksAvailable ? t('fileViewer.tweaks') : t('fileViewer.tweaksUnavailable')}
+            aria-pressed={tweaksMode}
+            disabled={!tweaksAvailable}
+            data-coming-soon={!tweaksAvailable ? 'true' : undefined}
+            onClick={() => setTweaksMode((v) => !v)}
+          >
+            <Icon name="tweaks" size={13} />
+            <span>{t('fileViewer.tweaks')}</span>
+            <span className="switch" aria-hidden />
+          </button>
         </div>
         <div className="viewer-toolbar-actions">
           {showPreviewToolbarControls ? (
@@ -5241,13 +5369,13 @@ function HtmlViewer({
                   type="button"
                   className={`viewer-action${selectedPalette || palettePopoverOpen ? ' active' : ''}`}
                   data-testid="palette-tweaks-toggle"
-                  title="Tweaks"
+                  title="Themes"
                   aria-haspopup="dialog"
                   aria-expanded={palettePopoverOpen}
                   onClick={() => setPalettePopoverOpen((v) => !v)}
                 >
-                  <Icon name="tweaks" size={13} />
-                  <span>Tweaks</span>
+                  <Icon name="paint-bucket" size={13} />
+                  <span>Themes</span>
                   {selectedPalette ? (
                     <span
                       className="palette-tweaks-badge"
@@ -5752,32 +5880,55 @@ function HtmlViewer({
                   sendDisabled={streaming}
                   sendDisabledReason="当前正有任务在执行"
                 >
-                  {useUrlLoadPreview ? (
-                    <iframe
-                      ref={iframeRef}
-                      data-testid="artifact-preview-frame"
-                      data-od-render-mode="url-load"
-                      title={file.name}
-                      sandbox="allow-scripts"
-                      src={previewSrcUrl}
-                      onLoad={syncBridgeModes}
-                      style={{ width: '100%', height: '100%', border: 0 }}
-                    />
-                  ) : (
-                    <iframe
-                      ref={iframeRef}
-                      data-testid="artifact-preview-frame"
-                      data-od-render-mode="srcdoc"
-                      title={file.name}
-                      sandbox="allow-scripts"
-                      srcDoc={srcDoc}
-                      onLoad={() => {
-                        replayInspectOverridesToIframe();
-                        syncBridgeModes();
-                      }}
-                      style={{ width: '100%', height: '100%', border: 0 }}
-                    />
-                  )}
+                  {/*
+                    Both iframes are always mounted; CSS visibility flips
+                    between them so toggling render mode never causes an
+                    iframe reload (and therefore never flashes). The
+                    `data-testid` follows the active iframe so test queries
+                    like `getByTestId('artifact-preview-frame')` still match
+                    exactly one element.
+                  */}
+                  <iframe
+                    ref={urlIframeRef}
+                    data-testid={useUrlLoadPreview ? 'artifact-preview-frame' : undefined}
+                    data-od-render-mode="url-load"
+                    title={file.name}
+                    sandbox="allow-scripts"
+                    src={previewSrcUrl}
+                    onLoad={syncBridgeModes}
+                    aria-hidden={!useUrlLoadPreview}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      border: 0,
+                      visibility: useUrlLoadPreview ? 'visible' : 'hidden',
+                      pointerEvents: useUrlLoadPreview ? 'auto' : 'none',
+                    }}
+                  />
+                  <iframe
+                    ref={srcdocIframeRef}
+                    data-testid={!useUrlLoadPreview ? 'artifact-preview-frame' : undefined}
+                    data-od-render-mode="srcdoc"
+                    title={file.name}
+                    sandbox="allow-scripts"
+                    srcDoc={srcDoc}
+                    onLoad={() => {
+                      replayInspectOverridesToIframe();
+                      syncBridgeModes();
+                    }}
+                    aria-hidden={useUrlLoadPreview}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      border: 0,
+                      visibility: !useUrlLoadPreview ? 'visible' : 'hidden',
+                      pointerEvents: !useUrlLoadPreview ? 'auto' : 'none',
+                    }}
+                  />
                 </PreviewDrawOverlay>
               </div>
             </div>
