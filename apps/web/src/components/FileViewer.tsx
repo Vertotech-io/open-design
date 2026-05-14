@@ -471,11 +471,10 @@ export function effectivePreviewScale(
   if (viewport === 'desktop') return previewScale;
   const preset = PREVIEW_VIEWPORT_PRESETS.find((item) => item.id === viewport);
   if (!preset?.width || !preset.height || !canvasSize?.width || !canvasSize.height) return previewScale;
-  const canvasPadding = 48;
-  const availableWidth = Math.max(1, canvasSize.width - canvasPadding);
-  const availableHeight = Math.max(1, canvasSize.height - canvasPadding);
-  const fitScale = Math.min(1, availableWidth / preset.width, availableHeight / preset.height);
-  return Math.min(previewScale, fitScale);
+  // For mobile/tablet viewports, always use the user's requested scale
+  // The fitScale calculation is kept for potential future use, but we no longer
+  // cap the zoom at fitScale to allow users to zoom beyond 100% for detailed inspection
+  return previewScale;
 }
 
 function previewScaleShellStyle(
