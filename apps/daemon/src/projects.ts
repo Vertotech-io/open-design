@@ -110,8 +110,14 @@ async function collectFiles(dir, relDir, out, skipDirs?: Set<string>) {
   }
   for (const e of entries) {
     if (e.name.startsWith('.')) continue;
-    const rel = relDir ? `${relDir}/${e.name}` : e.name;
     const full = path.join(dir, e.name);
+    try {
+      const ls = await lstat(full);
+      if (ls.isSymbolicLink()) continue;
+    } catch {
+      continue;
+    }
+    const rel = relDir ? `${relDir}/${e.name}` : e.name;
     if (e.isDirectory()) {
       if (skipDirs && skipDirs.has(e.name)) continue;
       await collectFiles(full, rel, out, skipDirs);
@@ -335,8 +341,14 @@ async function collectArchiveEntries(dir, relDir, out) {
   for (const e of entries) {
     if (e.name.startsWith('.')) continue;
     if (!e.isDirectory() && !e.isFile()) continue;
-    const rel = relDir ? `${relDir}/${e.name}` : e.name;
     const full = path.join(dir, e.name);
+    try {
+      const ls = await lstat(full);
+      if (ls.isSymbolicLink()) continue;
+    } catch {
+      continue;
+    }
+    const rel = relDir ? `${relDir}/${e.name}` : e.name;
     if (e.isDirectory()) {
       await collectArchiveEntries(full, rel, out);
       continue;
