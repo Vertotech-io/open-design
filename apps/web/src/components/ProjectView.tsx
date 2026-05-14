@@ -87,6 +87,7 @@ import type {
   LiveArtifactSummary,
   SkillSummary,
 } from '../types';
+import { historyWithApiAttachmentContext } from '../api-attachment-context';
 import {
   commentsToAttachments,
   historyWithCommentAttachmentContext,
@@ -1857,7 +1858,12 @@ export function ProjectView({
           }
         }
         const systemPrompt = await composedSystemPrompt();
-        const apiHistory = historyWithCommentAttachmentContext(nextHistory, userMsg.id);
+        const apiHistory = await historyWithApiAttachmentContext(
+          historyWithCommentAttachmentContext(nextHistory, userMsg.id),
+          userMsg.id,
+          project.id,
+          projectFiles,
+        );
         pushEvent({ kind: 'status', label: 'requesting', detail: config.model });
         let accumulatedAssistantText = '';
         void streamMessage(config, systemPrompt, apiHistory, controller.signal, {
