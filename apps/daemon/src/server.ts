@@ -3102,6 +3102,7 @@ export async function startServer({
     agentId,
     projectId,
     skillId,
+    skillIds,
     designSystemId,
     supportsCritiqueTheater,
     streamFormat,
@@ -3145,6 +3146,44 @@ export async function startServer({
         skillCritiquePolicy = skill.critiquePolicy;
         if (Array.isArray(skill.craftRequires))
           skillCraftRequires = skill.craftRequires;
+      }
+    }
+
+    // Per-turn skills picked via the composer's @-mention popover. They
+    // never persist on the project — we just append their bodies after the
+    // primary skill so the agent sees one combined block this turn.
+    const adHocSkillIds = Array.isArray(skillIds)
+      ? skillIds
+          .map((s: unknown) => (typeof s === 'string' ? s.trim() : ''))
+          .filter(Boolean)
+          .filter((id: string) => id !== effectiveSkillId)
+      : [];
+    if (adHocSkillIds.length > 0) {
+      const allSkills = await listAllSkillLikeEntries();
+      const seen = new Set(effectiveSkillId ? [effectiveSkillId] : []);
+      const blocks = [];
+      const baseBody = skillBody && skillBody.trim().length > 0 ? skillBody : '';
+      for (const id of adHocSkillIds) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const extra = findSkillById(allSkills, id);
+        if (!extra) continue;
+        if (Array.isArray(extra.craftRequires)) {
+          for (const c of extra.craftRequires) {
+            if (!skillCraftRequires.includes(c)) skillCraftRequires.push(c);
+          }
+        }
+        blocks.push(
+          `\n\n---\n\n## Composed skill — ${extra.name || id}\n\n${(extra.body || '').trim()}`
+        );
+      }
+      if (blocks.length > 0) {
+        skillBody = baseBody + blocks.join('');
+        if (!skillName) {
+          skillName = adHocSkillIds.length === 1
+            ? findSkillById(allSkills, adHocSkillIds[0])?.name ?? null
+            : 'composed';
+        }
       }
     }
 
@@ -3376,6 +3415,7 @@ export async function startServer({
       assistantMessageId,
       clientRequestId,
       skillId,
+      skillIds,
       designSystemId,
       attachments = [],
       commentAttachments = [],
@@ -3610,6 +3650,7 @@ export async function startServer({
         agentId,
         projectId,
         skillId,
+        skillIds,
         designSystemId,
         supportsCritiqueTheater: runtimeAdapter.supportsCritiqueTheater(),
         streamFormat: def?.streamFormat ?? 'plain',
