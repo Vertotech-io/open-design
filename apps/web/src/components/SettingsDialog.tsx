@@ -3105,6 +3105,7 @@ export async function persistConfigAndRunOrbit(
   options?: {
     daemonProviders?: AppConfig['mediaProviders'] | null;
     syncMediaProviders?: boolean;
+    locale?: string;
   },
 ): Promise<OrbitRunStartResponse> {
   if (options?.syncMediaProviders !== false) {
@@ -3113,7 +3114,11 @@ export async function persistConfigAndRunOrbit(
     });
   }
   await syncConfigToDaemon(config, { throwOnError: true });
-  const response = await fetch('/api/orbit/run', { method: 'POST' });
+  const response = await fetch('/api/orbit/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ locale: options?.locale ?? 'en' }),
+  });
   if (!response.ok) throw new Error('Orbit run failed');
   return await response.json() as OrbitRunStartResponse;
 }
@@ -3332,6 +3337,7 @@ function OrbitSection({
         const payload = await persistConfigAndRunOrbit(runConfig, {
           daemonProviders: daemonMediaProviders,
           syncMediaProviders: daemonMediaProvidersFetchState === 'ok',
+          locale,
         });
         if (!payload.projectId) throw new Error('Orbit run did not return a project');
 
