@@ -643,6 +643,274 @@ setInterval(() => {}, 1000);
       }
     }
   });
+
+  it('fails completed image runs when no project image file is produced', async () => {
+    const projectId = `image-missing-${randomUUID()}`;
+    const projectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'Image missing output',
+        metadata: { kind: 'image', imageModel: 'gpt-image-2' },
+      }),
+    });
+    expect(projectResponse.status).toBe(200);
+    const { conversationId } = await projectResponse.json() as { conversationId: string };
+
+    await withFakeAgent(
+      'codex',
+      `
+console.log(JSON.stringify({
+  type: 'item.completed',
+  item: { type: 'agent_message', text: 'Done - generated the image.' },
+}));
+process.exit(0);
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'codex',
+            projectId,
+            conversationId,
+            message: 'Generate a cute pink cat wallpaper',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+
+        const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`);
+        const eventsBody = await readSseUntil(eventsResponse, 'event: error');
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(eventsBody).toContain('no image output file was created or updated');
+        expect(statusBody.status).toBe('failed');
+      },
+    );
+  });
+
+  it('allows completed Claude image runs that ask a question form', async () => {
+    const projectId = `image-question-${randomUUID()}`;
+    const projectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'Image question form',
+        metadata: { kind: 'image', imageModel: 'gpt-image-2' },
+      }),
+    });
+    expect(projectResponse.status).toBe(200);
+    const { conversationId } = await projectResponse.json() as { conversationId: string };
+
+    await withFakeAgent(
+      'claude',
+      `
+console.log(JSON.stringify({
+  type: 'assistant',
+  message: {
+    id: 'msg-question-form',
+    content: [{
+      type: 'text',
+      text: 'Before I generate this, choose a style.\\n<question-form id="style"></question-form>',
+    }],
+  },
+}));
+process.exit(0);
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'claude',
+            projectId,
+            conversationId,
+            message: 'Generate a cute pink cat wallpaper',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(statusBody.status).toBe('succeeded');
+      },
+    );
+  });
+
+  it('allows completed ACP image runs that ask a question form', async () => {
+    const projectId = `image-acp-question-${randomUUID()}`;
+    const projectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'ACP image question form',
+        metadata: { kind: 'image', imageModel: 'gpt-image-2' },
+      }),
+    });
+    expect(projectResponse.status).toBe(200);
+    const { conversationId } = await projectResponse.json() as { conversationId: string };
+
+    await withFakeAgent(
+      'kilo',
+      `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin });
+function write(message) {
+  process.stdout.write(JSON.stringify(message) + '\\n');
+}
+rl.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    write({ jsonrpc: '2.0', id: message.id, result: {} });
+  } else if (message.method === 'session/new') {
+    write({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'fake-session' } });
+  } else if (message.method === 'session/prompt') {
+    write({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text: 'Before I generate this, choose a style.\\n<question-form id="style"></question-form>',
+          },
+        },
+      },
+    });
+    write({ jsonrpc: '2.0', id: message.id, result: {} });
+    process.exit(0);
+  }
+});
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'kilo',
+            projectId,
+            conversationId,
+            message: 'Generate a cute pink cat wallpaper',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+        const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`);
+        const eventsBody = await readSseUntil(eventsResponse, 'event: done');
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(eventsBody).not.toContain('AGENT_EXECUTION_FAILED');
+        expect(statusBody.status).toBe('succeeded');
+      },
+    );
+  });
+
+  it('allows completed plain stdout image runs that ask a question form', async () => {
+    const projectId = `image-stdout-question-${randomUUID()}`;
+    const projectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'Plain stdout image question form',
+        metadata: { kind: 'image', imageModel: 'gpt-image-2' },
+      }),
+    });
+    expect(projectResponse.status).toBe(200);
+    const { conversationId } = await projectResponse.json() as { conversationId: string };
+
+    await withFakeAgent(
+      'qwen',
+      `
+process.stdin.resume();
+process.stdin.on('end', () => {
+  console.log('Before I generate this, choose a style.');
+  console.log('<question-form id="style"></question-form>');
+  process.exit(0);
+});
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'qwen',
+            projectId,
+            conversationId,
+            message: 'Generate a cute pink cat wallpaper',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+        const eventsResponse = await fetch(`${baseUrl}/api/runs/${runId}/events`);
+        const eventsBody = await readSseUntil(eventsResponse, 'event: done');
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(eventsBody).not.toContain('AGENT_EXECUTION_FAILED');
+        expect(statusBody.status).toBe('succeeded');
+      },
+    );
+  });
+
+  it('allows completed image runs when a project image file is produced', async () => {
+    const projectId = `image-produced-${randomUUID()}`;
+    const projectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: projectId,
+        name: 'Image produced output',
+        metadata: { kind: 'image', imageModel: 'gpt-image-2' },
+      }),
+    });
+    expect(projectResponse.status).toBe(200);
+    const { conversationId } = await projectResponse.json() as { conversationId: string };
+
+    await withFakeAgent(
+      'codex',
+      `
+const fs = require('node:fs');
+const path = require('node:path');
+const cwdFlag = process.argv.indexOf('-C');
+const projectDir = cwdFlag >= 0 ? process.argv[cwdFlag + 1] : process.cwd();
+fs.writeFileSync(path.join(projectDir, 'pink-cat.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+console.log(JSON.stringify({
+  type: 'item.completed',
+  item: { type: 'agent_message', text: 'Created pink-cat.png.' },
+}));
+process.exit(0);
+`,
+      async () => {
+        const createResponse = await fetch(`${baseUrl}/api/runs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: 'codex',
+            projectId,
+            conversationId,
+            message: 'Generate a cute pink cat wallpaper',
+          }),
+        });
+        expect(createResponse.status).toBe(202);
+        const { runId } = await createResponse.json() as { runId: string };
+        const statusBody = await waitForRunStatus(baseUrl, runId);
+
+        expect(statusBody.status).toBe('succeeded');
+        const filesResponse = await fetch(`${baseUrl}/api/projects/${projectId}/files`);
+        const filesBody = await filesResponse.json() as { files: Array<{ name: string; kind: string }> };
+        expect(filesBody.files).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name: 'pink-cat.png', kind: 'image' }),
+          ]),
+        );
+      },
+    );
+  });
 });
 
 describe('daemon run creation during shutdown', () => {
