@@ -91,7 +91,10 @@ import { subscribe as subscribeFileEvents } from './project-watchers.js';
 import { renderDesignSystemPreview } from './design-system-preview.js';
 import { renderDesignSystemShowcase } from './design-system-showcase.js';
 import { createChatRunService } from './runs.js';
-import { reportRunCompletedFromDaemon } from './langfuse-bridge.js';
+import {
+  reportRunCompletedFromDaemon,
+  reportRunFeedbackFromDaemon,
+} from './langfuse-bridge.js';
 import {
   createAnalyticsService,
   readAnalyticsContext,
@@ -2788,6 +2791,19 @@ export async function startServer({
     getAppVersion: () => cachedAppVersion,
   });
 
+  const reportFeedback = (req: {
+    runId: string;
+    rating: 'positive' | 'negative';
+    reasonCodes: string[];
+    hasCustomReason: boolean;
+    customReason: string;
+    scoreMetadata?: Record<string, unknown>;
+  }) =>
+    reportRunFeedbackFromDaemon({
+      dataDir: RUNTIME_DATA_DIR,
+      ...req,
+    });
+
   const validateExternalApiBaseUrl = (baseUrl) => validateBaseUrl(baseUrl);
 
   const resolvedPortRef = {
@@ -4908,7 +4924,7 @@ export async function startServer({
     critique: critiqueDeps,
     validation: validationDeps,
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
-
+    telemetry: { reportFinalizedMessage, reportFeedback },
   });
 
   // Wait for `listen` to bind so callers always see the resolved URL —

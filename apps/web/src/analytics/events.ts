@@ -7,6 +7,10 @@
 import type {
   AppLaunchProps,
   ArtifactExportResultProps,
+  AssistantFeedbackClickProps,
+  AssistantFeedbackReasonClickProps,
+  AssistantFeedbackReasonSubmitProps,
+  AssistantFeedbackReasonViewProps,
   HomeClickCreateButtonProps,
   HomeViewAssetPanelProps,
   HomeViewPageProps,
@@ -174,4 +178,48 @@ export function trackRunFinished(
   options?: { requestId?: string },
 ) {
   track('run_finished', props as unknown as Record<string, unknown>, options);
+}
+
+export function trackAssistantFeedbackClick(
+  track: Track,
+  props: AssistantFeedbackClickProps,
+) {
+  track(
+    'assistant_feedback_click',
+    props as unknown as Record<string, unknown>,
+  );
+}
+
+export function trackAssistantFeedbackReasonView(
+  track: Track,
+  props: AssistantFeedbackReasonViewProps,
+) {
+  track(
+    'assistant_feedback_reason_view',
+    props as unknown as Record<string, unknown>,
+  );
+}
+
+export function trackAssistantFeedbackReasonClick(
+  track: Track,
+  props: AssistantFeedbackReasonClickProps,
+  options?: { requestId: string },
+) {
+  track(
+    'assistant_feedback_reason_click',
+    props as unknown as Record<string, unknown>,
+    options,
+  );
+}
+
+export function trackAssistantFeedbackReasonSubmit(
+  track: Track,
+  props: AssistantFeedbackReasonSubmitProps,
+  options?: { requestId: string },
+) {
+  track(
+    'assistant_feedback_reason_submit',
+    props as unknown as Record<string, unknown>,
+    options,
+  );
 }

@@ -293,6 +293,33 @@ export async function fetchChatRunStatus(runId: string): Promise<ChatRunStatusRe
   }
 }
 
+/**
+ * Forwards the user's assistant-turn rating to the daemon so it can emit
+ * a Langfuse `score-create`. Fire-and-forget — failures are not surfaced
+ * to the UI (the rating is already persisted on the message itself via
+ * the PUT /messages/:id round-trip).
+ */
+export async function reportChatRunFeedback(req: {
+  runId: string;
+  projectId: string;
+  conversationId: string;
+  assistantMessageId: string;
+  rating: 'positive' | 'negative';
+  reasonCodes: string[];
+  hasCustomReason: boolean;
+  customReason: string;
+}): Promise<void> {
+  try {
+    await fetch(`/api/runs/${encodeURIComponent(req.runId)}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+  } catch {
+    // Best-effort.
+  }
+}
+
 export async function listActiveChatRuns(
   projectId: string,
   conversationId: string,

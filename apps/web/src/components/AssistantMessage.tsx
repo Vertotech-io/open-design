@@ -26,6 +26,19 @@ import type {
   ChatMessageFeedbackReasonCode,
   ProjectFile,
 } from "../types";
+import {
+  normalizeCustomReason,
+  type TrackingFeedbackRatingWithNone,
+  type TrackingFeedbackReasonCode,
+  type TrackingProjectKind,
+} from "@open-design/contracts/analytics";
+import { useAnalytics } from "../analytics/provider";
+import {
+  trackAssistantFeedbackClick,
+  trackAssistantFeedbackReasonClick,
+  trackAssistantFeedbackReasonSubmit,
+  trackAssistantFeedbackReasonView,
+} from "../analytics/events";
 
 type TranslateFn = (
   key: keyof Dict,
@@ -36,6 +49,8 @@ interface Props {
   message: ChatMessage;
   streaming: boolean;
   projectId: string | null;
+  projectKind: TrackingProjectKind;
+  conversationId: string | null;
   projectFileNames?: Set<string>;
   onRequestOpenFile?: (name: string) => void;
   // True only for the most recent assistant message — gate question-form
@@ -66,6 +81,8 @@ export function AssistantMessage({
   message,
   streaming,
   projectId,
+  projectKind,
+  conversationId,
   projectFileNames,
   onRequestOpenFile,
   isLast,
@@ -188,6 +205,14 @@ export function AssistantMessage({
               <AssistantFeedback
                 feedback={message.feedback}
                 onFeedback={onFeedback}
+                analyticsCtx={{
+                  projectId,
+                  projectKind,
+                  conversationId,
+                  assistantMessageId: message.id,
+                  runId: message.runId ?? null,
+                  hasProducedFiles: produced.length > 0,
+                }}
                 footerProps={{
                   streaming,
                   startedAt: message.startedAt,
@@ -386,16 +411,28 @@ function AssistantFooter({
   );
 }
 
+interface AssistantFeedbackAnalyticsCtx {
+  projectId: string | null;
+  projectKind: TrackingProjectKind;
+  conversationId: string | null;
+  assistantMessageId: string;
+  runId: string | null;
+  hasProducedFiles: boolean;
+}
+
 function AssistantFeedback({
   feedback,
   onFeedback,
+  analyticsCtx,
   footerProps,
 }: {
   feedback: ChatMessage["feedback"];
   onFeedback: (change: ChatMessageFeedbackChange) => void;
+  analyticsCtx: AssistantFeedbackAnalyticsCtx;
   footerProps: AssistantFooterProps;
 }) {
   const t = useT();
+  const analytics = useAnalytics();
   const [burstKey, setBurstKey] = useState(0);
   const [reasonRating, setReasonRating] =
     useState<ChatMessageFeedbackRating | null>(null);
@@ -413,6 +450,33 @@ function AssistantFeedback({
     if (!reasonRating) return;
     reasonsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [reasonRating]);
+  // Fire assistant_feedback_reason_view exactly when the reason panel
+  // becomes visible — once per (message, rating) pair. Re-opening the
+  // panel after a clear+reselect counts as a new view.
+  useEffect(() => {
+    if (!reasonRating) return;
+    if (!analyticsCtx.projectId || !analyticsCtx.conversationId) return;
+    trackAssistantFeedbackReasonView(analytics.track, {
+      page: "studio",
+      area: "chat_panel",
+      element: "assistant_feedback_reason_panel",
+      view_type: "panel",
+      project_id: analyticsCtx.projectId,
+      project_kind: analyticsCtx.projectKind,
+      conversation_id: analyticsCtx.conversationId,
+      assistant_message_id: analyticsCtx.assistantMessageId,
+      run_id: analyticsCtx.runId,
+      rating: reasonRating,
+    });
+  }, [
+    reasonRating,
+    analytics.track,
+    analyticsCtx.projectId,
+    analyticsCtx.projectKind,
+    analyticsCtx.conversationId,
+    analyticsCtx.assistantMessageId,
+    analyticsCtx.runId,
+  ]);
   const toggleFeedback = (rating: ChatMessageFeedbackRating) => {
     const nextRating = selected === rating ? null : rating;
     if (nextRating === "positive") setBurstKey((key) => key + 1);
@@ -420,6 +484,33 @@ function AssistantFeedback({
     setCustomReason("");
     setReasonRating(nextRating);
     onFeedback(nextRating ? { rating: nextRating } : null);
+    if (analyticsCtx.projectId && analyticsCtx.conversationId) {
+      const ratingBefore: TrackingFeedbackRatingWithNone = selected ?? "none";
+      // `rating` carries the POST-action state — `'none'` when the user
+      // just cleared their rating. This pairs cleanly with `rating_before`
+      // so a state transition is fully described by the two fields plus
+      // `action`. (Analysts who want to know which thumb was cleared can
+      // read `rating_before`.)
+      const ratingAfter: TrackingFeedbackRatingWithNone = nextRating ?? "none";
+      trackAssistantFeedbackClick(analytics.track, {
+        page: "studio",
+        area: "chat_panel",
+        element: "assistant_feedback_button",
+        // Re-clicking the already-selected thumb is a "clear" action;
+        // every other case (no prior rating, or switching) is a submit.
+        action: nextRating
+          ? "submit_feedback_rating"
+          : "clear_feedback_rating",
+        project_id: analyticsCtx.projectId,
+        project_kind: analyticsCtx.projectKind,
+        conversation_id: analyticsCtx.conversationId,
+        assistant_message_id: analyticsCtx.assistantMessageId,
+        run_id: analyticsCtx.runId,
+        rating: ratingAfter,
+        rating_before: ratingBefore,
+        has_produced_files: analyticsCtx.hasProducedFiles,
+      });
+    }
   };
   const toggleReasonCode = (code: ChatMessageFeedbackReasonCode) => {
     const next = new Set(draftReasonCodes);
@@ -443,6 +534,45 @@ function AssistantFeedback({
           : undefined,
       reasonsSubmittedAt: Date.now(),
     });
+    if (analyticsCtx.projectId && analyticsCtx.conversationId) {
+      // Stitch the click ↔ result pair so PostHog can correlate the
+      // submit button click with the resulting reason payload.
+      const requestId = analytics.newRequestId();
+      const reasons = [...draftReasonCodes] as TrackingFeedbackReasonCode[];
+      const hasOther = draftReasonCodes.has("other");
+      const sharedPayload = {
+        page: "studio" as const,
+        area: "chat_panel" as const,
+        project_id: analyticsCtx.projectId,
+        project_kind: analyticsCtx.projectKind,
+        conversation_id: analyticsCtx.conversationId,
+        assistant_message_id: analyticsCtx.assistantMessageId,
+        run_id: analyticsCtx.runId,
+        rating: reasonRating,
+        reason: reasons,
+        reason_count: reasons.length,
+        has_custom_reason: hasOther && trimmedCustomReason.length > 0,
+        custom_reason: hasOther ? normalizeCustomReason(trimmedCustomReason) : '',
+      };
+      trackAssistantFeedbackReasonClick(
+        analytics.track,
+        {
+          ...sharedPayload,
+          element: "assistant_feedback_reason_submit_button",
+          action: "click_submit_feedback_reason",
+        },
+        { requestId },
+      );
+      trackAssistantFeedbackReasonSubmit(
+        analytics.track,
+        {
+          ...sharedPayload,
+          element: "assistant_feedback_reason_submit",
+          action: "submit_feedback_reason",
+        },
+        { requestId },
+      );
+    }
     setReasonRating(null);
   };
   const reasonOptions = reasonRating

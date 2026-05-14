@@ -22,7 +22,11 @@ export type AnalyticsEventName =
   | 'studio_click'
   | 'run_created'
   | 'run_finished'
-  | 'artifact_export_result';
+  | 'artifact_export_result'
+  | 'assistant_feedback_click'
+  | 'assistant_feedback_reason_view'
+  | 'assistant_feedback_reason_click'
+  | 'assistant_feedback_reason_submit';
 
 // ---- Enums shared across events (CSV wire format) ------------------------
 
@@ -132,6 +136,33 @@ export type TrackingExportFormat =
 export type TrackingRunResult = 'success' | 'failed' | 'cancelled';
 export type TrackingCreateResult = 'success' | 'failed';
 export type TrackingExportResult = 'success' | 'failed' | 'cancelled';
+
+export type TrackingFeedbackRating = 'positive' | 'negative';
+// Click events emit `none` when the user clears a previously-set rating, so
+// `rating` (post-state) and `rating_before` (pre-state) on click both use
+// this widened union. Reason events still require a concrete rating.
+export type TrackingFeedbackRatingWithNone = 'positive' | 'negative' | 'none';
+export type TrackingFeedbackAction =
+  | 'submit_feedback_rating'
+  | 'clear_feedback_rating';
+
+// Mirrors ChatMessageFeedbackReasonCode in packages/contracts/src/api/chat.ts.
+// Kept independent so the analytics wire format can evolve without forcing
+// a contract bump on the chat persistence shape.
+export type TrackingFeedbackReasonCode =
+  | 'matched_request'
+  | 'strong_visual'
+  | 'useful_structure'
+  | 'easy_to_continue'
+  | 'missed_request'
+  | 'weak_visual'
+  | 'incomplete_output'
+  | 'hard_to_use'
+  | 'other';
+
+// Product confirmed on 2026-05-13: custom_reason ships the raw text so
+// analysts can read the actual feedback. The earlier length-bucket approach
+// from the tracking doc draft is no longer in effect.
 
 export type TrackingTokenCountSource =
   | 'provider_usage'
@@ -368,6 +399,65 @@ export interface ArtifactExportResultProps {
   export_duration_ms: number;
 }
 
+interface AssistantFeedbackBase {
+  page: 'studio';
+  area: 'chat_panel';
+  project_id: string;
+  project_kind: TrackingProjectKind;
+  conversation_id: string;
+  assistant_message_id: string;
+  // run_id may be absent for messages whose run record is missing or pruned,
+  // but the product funnel keys off this; we emit `null` rather than dropping
+  // the field so PostHog can distinguish "no run id" from "field forgotten".
+  run_id: string | null;
+  rating: TrackingFeedbackRating;
+}
+
+// Click events override `rating` to allow `'none'` because the user can
+// clear a previously-set rating; reason_* events still inherit the
+// stricter `positive | negative` base since they only fire after the user
+// commits to a thumb.
+export interface AssistantFeedbackClickProps
+  extends Omit<AssistantFeedbackBase, 'rating'> {
+  element: 'assistant_feedback_button';
+  action: TrackingFeedbackAction;
+  /** Post-action state. `'none'` when the user just cleared their rating. */
+  rating: TrackingFeedbackRatingWithNone;
+  /** Pre-action state. Renamed from `previous_rating` for symmetry with `rating`. */
+  rating_before: TrackingFeedbackRatingWithNone;
+  has_produced_files: boolean;
+}
+
+export interface AssistantFeedbackReasonViewProps extends AssistantFeedbackBase {
+  element: 'assistant_feedback_reason_panel';
+  view_type: 'panel';
+}
+
+// Shape shared by reason_click (button click) and reason_submit (result).
+// Both fire from the same submit handler with the same payload, threaded by
+// request_id so PostHog can stitch click→result.
+interface AssistantFeedbackReasonResultBase extends AssistantFeedbackBase {
+  reason: TrackingFeedbackReasonCode[];
+  reason_count: number;
+  has_custom_reason: boolean;
+  /** Raw free-text the user typed in the "other" input. Empty string when
+   * the user didn't select "other" or left the field blank. Product
+   * confirmed on 2026-05-13 that the raw text ships (no length bucketing). */
+  custom_reason: string;
+}
+
+export interface AssistantFeedbackReasonClickProps
+  extends AssistantFeedbackReasonResultBase {
+  element: 'assistant_feedback_reason_submit_button';
+  action: 'click_submit_feedback_reason';
+}
+
+export interface AssistantFeedbackReasonSubmitProps
+  extends AssistantFeedbackReasonResultBase {
+  element: 'assistant_feedback_reason_submit';
+  action: 'submit_feedback_reason';
+}
+
 // ---- Discriminated union of all P0 event payloads ------------------------
 
 export type AnalyticsEventPayload =
@@ -390,7 +480,20 @@ export type AnalyticsEventPayload =
   | { event: 'studio_click'; props: StudioClickChatComposerProps | StudioClickShareOptionProps }
   | { event: 'run_created'; props: RunCreatedProps }
   | { event: 'run_finished'; props: RunFinishedProps }
-  | { event: 'artifact_export_result'; props: ArtifactExportResultProps };
+  | { event: 'artifact_export_result'; props: ArtifactExportResultProps }
+  | { event: 'assistant_feedback_click'; props: AssistantFeedbackClickProps }
+  | {
+      event: 'assistant_feedback_reason_view';
+      props: AssistantFeedbackReasonViewProps;
+    }
+  | {
+      event: 'assistant_feedback_reason_click';
+      props: AssistantFeedbackReasonClickProps;
+    }
+  | {
+      event: 'assistant_feedback_reason_submit';
+      props: AssistantFeedbackReasonSubmitProps;
+    };
 
 // ---- Enum mapping helpers (code ↔ CSV wire format) -----------------------
 //
@@ -586,4 +689,16 @@ export function artifactKindToTracking(args: {
     return 'doc';
   }
   return 'unknown';
+}
+
+/**
+ * Normalize the "other" custom-reason free text for transport. Trims
+ * whitespace and returns empty string when the field is blank or the user
+ * didn't select the "other" option. Callers should pass the raw text only
+ * when `has_custom_reason` is true; the helper itself is permissive.
+ */
+export function normalizeCustomReason(
+  text: string | null | undefined,
+): string {
+  return (text ?? '').trim();
 }

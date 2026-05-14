@@ -108,6 +108,7 @@ function setUserScroll(top: number) {
 function chatPaneEl(messages: ChatMessage[], activeConversationId: string | null) {
   return (
     <ChatPane
+      projectKind="prototype"
       messages={messages}
       streaming={false}
       error={null}

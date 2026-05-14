@@ -66,6 +66,34 @@ export interface ChatMessageFeedback {
   updatedAt?: number;
 }
 
+/**
+ * POST /api/runs/:runId/feedback — relays the user's assistant-turn rating
+ * to Langfuse as a `score-create` so evals can filter traces by feedback.
+ * The daemon is the single network egress point for telemetry (web never
+ * talks to Langfuse directly), and gates this on `telemetry.metrics +
+ * telemetry.content` consent independently of what the browser thinks.
+ *
+ * `customReason` ships the raw free text the user typed in the "other"
+ * input (trimmed). Product confirmed on 2026-05-13 that analysts need the
+ * text to make sense of the feedback; this is consent-gated behind
+ * `telemetry.content` like the rest of the message-content telemetry.
+ */
+export interface ChatRunFeedbackRequest {
+  projectId: string;
+  conversationId: string;
+  assistantMessageId: string;
+  rating: ChatMessageFeedbackRating;
+  reasonCodes: ChatMessageFeedbackReasonCode[];
+  hasCustomReason: boolean;
+  /** Raw "other" free text (trimmed). Empty string when no custom reason. */
+  customReason: string;
+}
+
+export interface ChatRunFeedbackResponse {
+  /** `'accepted'` once the daemon has enqueued (or skipped due to consent). */
+  status: 'accepted' | 'skipped_consent' | 'skipped_no_sink';
+}
+
 export interface ChatRunCreateResponse {
   runId: string;
 }
