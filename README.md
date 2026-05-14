@@ -372,7 +372,7 @@ pnpm tools-dev run web
 # open the web URL printed by tools-dev
 ```
 
-Environment requirements: Node `~24` and pnpm `10.33.x`. `nvm`/`fnm` are optional helpers only; if you use one, run `nvm install 24 && nvm use 24` or `fnm install 24 && fnm use 24` before `pnpm install`.
+Environment requirements: Node `~24` and pnpm `10.33.x`. [`nvm`](https://www.nvmnode.com)/[`fnm`](https://www.fnmnode.com) are optional helpers only; if you use one, run `nvm install 24 && nvm use 24` or `fnm install 24 && fnm use 24` before `pnpm install`.
 
 Windows users can follow [`docs/windows-troubleshooting.md`](docs/windows-troubleshooting.md) for the native setup path and a tiny double-click launcher.
 
