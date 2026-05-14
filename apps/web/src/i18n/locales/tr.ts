@@ -592,6 +592,8 @@ export const tr: Dict = {
   'chat.importFig': 'Bir .fig dosyası yükleyin',
   'chat.importGitHub': 'GitHub bağla',
   'chat.importWeb': 'Bir web elementi',
+  'chat.uploadFolder': 'Klasör yükle',
+  'chat.uploadNoProjectError': 'Dosya yüklemeden önce bir sohbet başlatın',
   'chat.importFolder': 'Kod klasörünü bağlantıla',
   'chat.importSkills': 'Yetenekler ve tasarım sistemleri',
   'chat.importProject': 'Reference another project',

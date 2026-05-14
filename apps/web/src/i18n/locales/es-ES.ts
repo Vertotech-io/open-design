@@ -492,6 +492,8 @@ export const esES: Dict = {
   'chat.importFig': 'Subir archivo .fig',
   'chat.importGitHub': 'Conectar GitHub',
   'chat.importWeb': 'Capturar elemento web',
+  'chat.uploadFolder': 'Subir carpeta',
+  'chat.uploadNoProjectError': 'Inicia una conversación antes de subir archivos',
   'chat.importFolder': 'Vincular carpeta de código',
   'chat.importSkills': 'Skills y sistemas de diseño',
   'chat.importProject': 'Reference another project',

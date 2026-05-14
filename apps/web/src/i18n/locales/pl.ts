@@ -603,6 +603,8 @@ export const pl: Dict = {
   'chat.importFig': 'Prześlij plik .fig',
   'chat.importGitHub': 'Połącz z GitHub',
   'chat.importWeb': 'Pobierz element webowy',
+  'chat.uploadFolder': 'Prześlij folder',
+  'chat.uploadNoProjectError': 'Rozpocznij rozmowę przed przesłaniem plików',
   'chat.importFolder': 'Połącz folder z kodem',
   'chat.importSkills': 'Umiejętności i systemy projektowania',
   'chat.importProject': 'Reference another project',

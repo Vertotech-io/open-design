@@ -624,6 +624,8 @@ export const ru: Dict = {
   'chat.importFig': 'Загрузить .fig файл',
   'chat.importGitHub': 'Подключить GitHub',
   'chat.importWeb': 'Захватить веб-элемент',
+  'chat.uploadFolder': 'Загрузить папку',
+  'chat.uploadNoProjectError': 'Начните разговор перед загрузкой файлов',
   'chat.importFolder': 'Ссылка на папку с кодом',
   'chat.importSkills': 'Навыки и дизайн-системы',
   'chat.importProject': 'Reference another project',

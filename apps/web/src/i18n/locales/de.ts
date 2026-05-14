@@ -491,6 +491,8 @@ export const de: Dict = {
   'chat.importFig': '.fig-Datei hochladen',
   'chat.importGitHub': 'GitHub verbinden',
   'chat.importWeb': 'Webelement erfassen',
+  'chat.uploadFolder': 'Ordner hochladen',
+  'chat.uploadNoProjectError': 'Starten Sie zuerst eine Unterhaltung, bevor Sie Dateien hochladen',
   'chat.importFolder': 'Code-Ordner verknüpfen',
   'chat.importSkills': 'Skills und Designsysteme',
   'chat.importProject': 'Reference another project',

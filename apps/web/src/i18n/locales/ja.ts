@@ -490,6 +490,8 @@ export const ja: Dict = {
   'chat.importFig': '.fig ファイルをアップロード',
   'chat.importGitHub': 'GitHub に接続',
   'chat.importWeb': 'Web 要素を取得',
+  'chat.uploadFolder': 'フォルダをアップロード',
+  'chat.uploadNoProjectError': 'ファイルをアップロードする前に会話を開始してください',
   'chat.importFolder': 'コードフォルダーをリンク',
   'chat.importSkills': 'スキルとデザインシステム',
   'chat.importProject': 'Reference another project',
