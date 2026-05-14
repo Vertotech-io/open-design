@@ -23,6 +23,7 @@ import { buildVisualAnnotationAttachment } from '../comments';
 import { Icon } from "./Icon";
 import { BUILT_IN_PETS, CUSTOM_PET_ID, resolveActivePet } from "./pet/pets";
 import { ANNOTATION_EVENT, type AnnotationEventDetail } from "./PreviewDrawOverlay";
+import { DesignSystemSwitchPicker } from "./DesignSystemSwitchPicker";
 
 type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
 
@@ -86,6 +87,19 @@ interface Props {
   researchAvailable?: boolean;
   projectMetadata?: ProjectMetadata;
   onProjectMetadataChange?: (metadata: ProjectMetadata) => void;
+  // Project's current `designSystemId`. The mid-chat design-system picker
+  // uses this to surface a "current" indicator and to no-op a redundant
+  // switch. Optional so test/screenshot harnesses can omit it.
+  currentDesignSystemId?: string | null;
+  // Fires after a successful `PATCH /api/projects/:id` from the mid-chat
+  // design-system picker. Parent updates its mirror of project state so
+  // subsequent chat turns compose with the new DESIGN.md. `null` means the
+  // user picked the "freeform / no DS" entry.
+  onActiveDesignSystemChange?: (designSystemId: string | null) => void;
+  // Optional transient banner sink. The composer emits one short message
+  // here when a mid-chat design-system switch lands (or fails) so the user
+  // has explicit confirmation without re-opening the picker.
+  onShowToast?: (message: string) => void;
 }
 
 // Imperative handle so ancestors (e.g. example chips in ChatPane) can
@@ -136,6 +150,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       researchAvailable = false,
       projectMetadata,
       onProjectMetadataChange,
+      currentDesignSystemId = null,
+      onActiveDesignSystemChange,
+      onShowToast,
     },
     ref
   ) {
@@ -730,6 +747,25 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       if (result?.metadata) onProjectMetadataChange?.(result.metadata);
     }
 
+    async function handleSwitchDesignSystem(
+      designSystemId: string | null,
+      title: string | null,
+    ): Promise<boolean> {
+      if (!projectId) return false;
+      if (designSystemId === currentDesignSystemId) return true;
+      const result = await patchProject(projectId, { designSystemId });
+      if (!result) {
+        onShowToast?.(t('chat.importDesignSystemFailed'));
+        return false;
+      }
+      onActiveDesignSystemChange?.(designSystemId);
+      const switchedTitle = designSystemId === null
+        ? t('chat.importDesignSystemNone')
+        : title ?? designSystemId;
+      onShowToast?.(t('chat.importDesignSystemSwitched', { title: switchedTitle }));
+      return true;
+    }
+
     async function handleUnlinkFolder(dir: string) {
       if (!projectId) return;
       const base = projectMetadata ?? { kind: 'prototype' as const };
@@ -1116,6 +1152,19 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                           setToolsOpen(false);
                           await handleLinkFolder();
                         }}
+                        currentDesignSystemId={currentDesignSystemId}
+                        onSwitchDesignSystem={
+                          projectId
+                            ? async (designSystemId, title) => {
+                                const ok = await handleSwitchDesignSystem(
+                                  designSystemId,
+                                  title,
+                                );
+                                if (ok) setToolsOpen(false);
+                                return ok;
+                              }
+                            : undefined
+                        }
                       />
                     ) : null}
                     {toolsTab === 'pet' && petEnabled ? (
@@ -1442,10 +1491,35 @@ function ToolsMcpPanel({
 function ToolsImportPanel({
   t,
   onLinkFolder,
+  currentDesignSystemId,
+  onSwitchDesignSystem,
 }: {
   t: TranslateFn;
   onLinkFolder: () => Promise<void> | void;
+  currentDesignSystemId?: string | null;
+  // When omitted (no active project) the design-system import row stays
+  // disabled with the existing "Coming soon" affordance so users aren't
+  // routed into a picker that has nothing to PATCH. Returns true on a
+  // successful PATCH so the picker can close itself; false leaves the
+  // picker open so the user can retry.
+  onSwitchDesignSystem?: (
+    designSystemId: string | null,
+    title: string | null,
+  ) => Promise<boolean>;
 }) {
+  const [view, setView] = useState<'root' | 'designSystems'>('root');
+
+  if (view === 'designSystems' && onSwitchDesignSystem) {
+    return (
+      <DesignSystemSwitchPicker
+        t={t}
+        currentDesignSystemId={currentDesignSystemId}
+        onSelect={onSwitchDesignSystem}
+        onBack={() => setView('root')}
+      />
+    );
+  }
+
   return (
     <div className="composer-tools-list">
       <ImportItem icon="upload" label={t('chat.importFig')} t={t} />
@@ -1457,7 +1531,14 @@ function ToolsImportPanel({
         enabled
         onClick={() => void onLinkFolder()}
       />
-      <ImportItem icon="sparkles" label={t('chat.importSkills')} t={t} />
+      <ImportItem
+        icon="sparkles"
+        label={t('chat.importSkills')}
+        t={t}
+        enabled={!!onSwitchDesignSystem}
+        onClick={() => setView('designSystems')}
+        testId="composer-import-design-systems"
+      />
       <ImportItem icon="file" label={t('chat.importProject')} t={t} />
     </div>
   );
@@ -1530,12 +1611,14 @@ function ImportItem({
   t,
   enabled,
   onClick,
+  testId,
 }: {
   icon: "upload" | "link" | "grid" | "folder" | "sparkles" | "file";
   label: string;
   t: TranslateFn;
   enabled?: boolean;
   onClick?: () => void;
+  testId?: string;
 }) {
   return (
     <button
@@ -1546,6 +1629,7 @@ function ImportItem({
       disabled={!enabled}
       title={enabled ? label : t('chat.importComingSoon')}
       onClick={enabled && onClick ? onClick : (e) => e.preventDefault()}
+      data-testid={testId}
     >
       <span className="ico" aria-hidden>
         <Icon name={icon} size={14} />

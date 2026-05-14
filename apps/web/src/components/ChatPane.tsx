@@ -257,6 +257,12 @@ interface Props {
   onProjectMetadataChange?: (metadata: ProjectMetadata) => void;
   researchAvailable?: boolean;
   onCollapse?: () => void;
+  // Forwarded straight to the chat composer's mid-chat design-system
+  // switcher. ProjectView owns the project record so the parent is the
+  // natural place to mirror the new `designSystemId` after a PATCH lands.
+  currentDesignSystemId?: string | null;
+  onActiveDesignSystemChange?: (designSystemId: string | null) => void;
+  onShowToast?: (message: string) => void;
 }
 
 type Tab = 'chat' | 'comments';
@@ -300,6 +306,9 @@ export function ChatPane({
   skills = [],
   researchAvailable,
   onCollapse,
+  currentDesignSystemId,
+  onActiveDesignSystemChange,
+  onShowToast,
 }: Props) {
   const t = useT();
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -745,6 +754,9 @@ export function ChatPane({
             researchAvailable={researchAvailable}
             projectMetadata={projectMetadata}
             onProjectMetadataChange={onProjectMetadataChange}
+            currentDesignSystemId={currentDesignSystemId}
+            onActiveDesignSystemChange={onActiveDesignSystemChange}
+            onShowToast={onShowToast}
           />
         </>
       ) : null}
