@@ -221,6 +221,7 @@ export function NewProjectPanel({
   const t = useT();
   const analytics = useAnalytics();
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
   const [baseDir, setBaseDir] = useState('');
   const [importingFolder, setImportingFolder] = useState(false);
@@ -557,6 +558,12 @@ export function NewProjectPanel({
       metadata,
       requestId,
     });
+    // Reset name and refocus input after project creation
+    setName('');
+    // Use setTimeout to ensure the focus happens after any state updates
+    setTimeout(() => {
+      nameInputRef.current?.focus();
+    }, 0);
   }
 
   async function handleImportPicked(ev: React.ChangeEvent<HTMLInputElement>) {
@@ -676,6 +683,7 @@ export function NewProjectPanel({
         </h3>
 
         <input
+          ref={nameInputRef}
           className="newproj-name"
           data-testid="new-project-name"
           placeholder={t('newproj.namePlaceholder')}
