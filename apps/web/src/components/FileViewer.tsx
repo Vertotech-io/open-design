@@ -1826,6 +1826,7 @@ function BoardComposerPopover({
   onDraft,
   onAddDraft,
   onRemoveQueuedNote,
+  onRemovePodMember,
   onClose,
   onSaveComment,
   onSendBatch,
@@ -1840,6 +1841,7 @@ function BoardComposerPopover({
   onDraft: (value: string) => void;
   onAddDraft: () => void;
   onRemoveQueuedNote: (index: number) => void;
+  onRemovePodMember: (elementId: string) => void;
   onClose: () => void;
   onSaveComment: () => void | Promise<void>;
   onSendBatch: () => void | Promise<void>;
@@ -1893,9 +1895,18 @@ function BoardComposerPopover({
         <div className="board-pod-summary">
           <strong>{target.memberCount || podMembers.length} captured items</strong>
           <div className="board-pod-members">
-            {podMembers.slice(0, 6).map((member) => (
+            {podMembers.map((member) => (
               <span key={member.elementId} className="board-pod-chip">
                 {summarizeMember(member)}
+                <button
+                  type="button"
+                  className="board-pod-chip-remove"
+                  title={t('chat.comments.removePodMember')}
+                  aria-label={t('chat.comments.removePodMember')}
+                  onClick={() => onRemovePodMember(member.elementId)}
+                >
+                  <Icon name="close" size={10} />
+                </button>
               </span>
             ))}
           </div>
@@ -3680,6 +3691,8 @@ function HtmlViewer({
     [],
   );
   const [activeCommentTarget, setActiveCommentTarget] = useState<PreviewCommentSnapshot | null>(null);
+  const activeCommentTargetRef = useRef(activeCommentTarget);
+  activeCommentTargetRef.current = activeCommentTarget;
   const [hoveredCommentTarget, setHoveredCommentTarget] = useState<PreviewCommentSnapshot | null>(null);
   const [liveCommentTargets, setLiveCommentTargets] = useState<Map<string, PreviewCommentSnapshot>>(() => new Map());
   const liveCommentTargetsRef = useRef(liveCommentTargets);
@@ -5827,6 +5840,56 @@ function HtmlViewer({
                 onRemoveQueuedNote={(index) =>
                   setQueuedBoardNotes((current) => current.filter((_, currentIndex) => currentIndex !== index))
                 }
+                onRemovePodMember={(elementId) => {
+                  const current = activeCommentTargetRef.current;
+                  if (!current) return;
+                  const nextMembers = (current.podMembers ?? []).filter((m) => m.elementId !== elementId);
+                  if (nextMembers.length === 0) {
+                    clearBoardComposer();
+                  } else {
+                    const minX = Math.min(...nextMembers.map((m) => m.position.x));
+                    const minY = Math.min(...nextMembers.map((m) => m.position.y));
+                    const maxX = Math.max(...nextMembers.map((m) => m.position.x + m.position.width));
+                    const maxY = Math.max(...nextMembers.map((m) => m.position.y + m.position.height));
+                    const combinedSelector = nextMembers
+                      .slice(0, 8)
+                      .map((m) => m.selector)
+                      .filter(Boolean)
+                      .join(', ');
+                    const summary = nextMembers
+                      .slice(0, 3)
+                      .map((m) => {
+                        const text = m.text.trim();
+                        if (text) {
+                          const trimmed = text.length > 28 ? `${text.slice(0, 25)}...` : text;
+                          return `${m.label || m.elementId} · ${trimmed}`;
+                        }
+                        return m.label || m.elementId;
+                      })
+                      .join(' · ');
+                    const combinedText = nextMembers
+                      .slice(0, 4)
+                      .map((m) => m.text)
+                      .filter(Boolean)
+                      .join(' · ');
+                    const combinedHtmlHint = nextMembers
+                      .slice(0, 4)
+                      .map((m) => m.htmlHint)
+                      .filter(Boolean)
+                      .join(' ')
+                      .slice(0, 180);
+                    setActiveCommentTarget({
+                      ...current,
+                      podMembers: nextMembers,
+                      memberCount: nextMembers.length,
+                      selector: combinedSelector || 'body *',
+                      label: summary || `Pod of ${nextMembers.length} items`,
+                      position: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+                      text: combinedText,
+                      htmlHint: combinedHtmlHint,
+                    });
+                  }
+                }}
                 onClose={clearBoardComposer}
                 onSaveComment={savePersistentComment}
                 onSendBatch={sendBoardBatch}
