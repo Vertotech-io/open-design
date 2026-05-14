@@ -34,6 +34,7 @@ import {
   cursorAuthGuidance,
   probeAgentAuthStatus,
 } from './runtimes/auth.js';
+import { buildOpenAIChatTokenParam } from './openai-chat-token-params.js';
 import type { AgentCliEnvPrefs } from './app-config.js';
 import { createRuntimeAdapter } from './runtimes/runtime-adapter.js';
 import type { RuntimeAgentDef } from './runtimes/types.js';
@@ -440,7 +441,7 @@ function buildProviderCall(input: ProviderTestRequest): ProviderCallShape {
         },
         body: {
           model,
-          max_tokens: PROVIDER_MAX_TOKENS,
+          ...buildOpenAIChatTokenParam(model, PROVIDER_MAX_TOKENS),
           messages: [{ role: 'user', content: SMOKE_PROMPT }],
           stream: false,
         },
@@ -473,7 +474,7 @@ function buildProviderCall(input: ProviderTestRequest): ProviderCallShape {
         },
         body: {
           ...(usesVersionedOpenAIPath ? { model } : {}),
-          max_tokens: PROVIDER_MAX_TOKENS,
+          ...buildOpenAIChatTokenParam(model, PROVIDER_MAX_TOKENS),
           messages: [{ role: 'user', content: SMOKE_PROMPT }],
           stream: false,
         },
