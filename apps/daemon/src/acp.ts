@@ -4,7 +4,12 @@ import path from 'node:path';
 
 const ACP_PROTOCOL_VERSION = 1;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_STAGE_TIMEOUT_MS = 180_000;
+// Allow user-configurable stage timeout via OD_ACP_TIMEOUT_MS env var.
+// Default increased from 180s to 600s (10 minutes) to support complex tasks
+// like repo analysis + multi-page document generation (issue #646).
+const DEFAULT_STAGE_TIMEOUT_MS = process.env.OD_ACP_TIMEOUT_MS 
+  ? parseInt(process.env.OD_ACP_TIMEOUT_MS, 10) 
+  : 600_000;
 
 type JsonRpcId = string | number;
 type JsonObject = Record<string, unknown>;
