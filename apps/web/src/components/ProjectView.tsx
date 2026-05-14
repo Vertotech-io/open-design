@@ -1361,16 +1361,23 @@ export function ProjectView({
       setArtifact(null);
       savedArtifactRef.current = null;
       onTouchProject();
-      persistMessage(userMsg);
+      // On retry, the user message is already on disk; only the new
+      // assistant placeholder needs persisting. Skipping persistMessage(userMsg)
+      // also keeps the original timestamp/id stable.
+      if (!options.retryOfAssistantId) persistMessage(userMsg);
       persistMessage(assistantMsg);
-      if (commentAttachments.length > 0) {
+      const effectiveCommentAttachments = options.retryOfAssistantId
+        ? userMsg.commentAttachments ?? []
+        : commentAttachments;
+      if (!options.retryOfAssistantId && commentAttachments.length > 0) {
         void patchAttachedStatuses(commentAttachments, 'applying');
         setAttachedComments([]);
       }
       // If this is the first turn, derive a working title from the prompt
       // so the conversation is identifiable in the dropdown without a
-      // round-trip through the agent.
-      if (messages.length === 0) {
+      // round-trip through the agent. Skip on retry (title already set, and
+      // priorMessages excludes the user turn so length===0 would mis-fire).
+      if (!options.retryOfAssistantId && messages.length === 0) {
         const title = prompt.slice(0, 60).trim();
         if (title) {
           setConversations((curr) =>
@@ -1553,8 +1560,8 @@ export function ProjectView({
             endedAt: Date.now(),
             runStatus: resolveSucceededRunStatus(prev.runStatus),
           }));
-          if (commentAttachments.length > 0) {
-            void patchAttachedStatuses(commentAttachments, 'needs_review');
+          if (effectiveCommentAttachments.length > 0) {
+            void patchAttachedStatuses(effectiveCommentAttachments, 'needs_review');
           }
           setStreaming(false);
           abortRef.current = null;
@@ -1598,8 +1605,8 @@ export function ProjectView({
               ? 'failed'
               : prev.runStatus,
           }));
-          if (commentAttachments.length > 0) {
-            void patchAttachedStatuses(commentAttachments, 'failed');
+          if (effectiveCommentAttachments.length > 0) {
+            void patchAttachedStatuses(effectiveCommentAttachments, 'failed');
           }
           setStreaming(false);
           abortRef.current = null;
@@ -1769,6 +1776,18 @@ export function ProjectView({
       await handleSend('', [], commentAttachments);
     },
     [handleSend, currentConversationActionDisabled],
+  );
+
+  // Retry a failed assistant turn without appending a duplicate user
+  // message. The previous user turn is reused verbatim; the failed
+  // assistant turn (and anything after it) is dropped from history
+  // before re-streaming. See issue #475.
+  const handleRetry = useCallback(
+    (failedAssistantId: string) => {
+      if (streaming) return;
+      void handleSend('', [], [], { retryOfAssistantId: failedAssistantId });
+    },
+    [streaming, handleSend],
   );
 
   const persistArtifact = useCallback(
@@ -2630,6 +2649,27 @@ function assistantAgentDisplayName(
 
 function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled';
+}
+
+/**
+ * Locate the user turn that should be re-sent when retrying a failed
+ * assistant turn. Returns the original user message verbatim plus the
+ * conversation history that precedes it. Callers must NOT append a new
+ * user message — that would duplicate the prompt in the LLM context
+ * (issue #475).
+ *
+ * Returns null when the failed assistant id is not found, is the first
+ * message, or is not preceded by a user message.
+ */
+export function resolveRetryTarget(
+  messages: ChatMessage[],
+  failedAssistantId: string,
+): { userMsg: ChatMessage; priorMessages: ChatMessage[] } | null {
+  const failedIdx = messages.findIndex((m) => m.id === failedAssistantId);
+  if (failedIdx <= 0) return null;
+  const prior = messages[failedIdx - 1];
+  if (!prior || prior.role !== 'user') return null;
+  return { userMsg: prior, priorMessages: messages.slice(0, failedIdx - 1) };
 }
 
 function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
