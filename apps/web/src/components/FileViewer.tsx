@@ -2000,6 +2000,7 @@ function CommentSidePanel({
   onClearSelection,
   onReply,
   onSendSelected,
+  onClose,
   sending,
   t,
 }: {
@@ -2009,6 +2010,7 @@ function CommentSidePanel({
   onClearSelection: () => void;
   onReply: (comment: PreviewComment) => void;
   onSendSelected: () => void | Promise<void>;
+  onClose?: () => void;
   sending: boolean;
   t: TranslateFn;
 }) {
@@ -2017,6 +2019,20 @@ function CommentSidePanel({
   const selectedCount = visibleSelectedIds.size;
   return (
     <aside className="comment-side-panel" data-testid="comment-side-panel" aria-label={t('chat.tabComments')}>
+      {onClose ? (
+        <div className="comment-side-header">
+          <h3>{t('chat.tabComments')}</h3>
+          <button
+            type="button"
+            className="comment-side-close"
+            onClick={onClose}
+            title={t('common.close')}
+            aria-label={t('common.close')}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        </div>
+      ) : null}
       <div className="comment-side-list">
         {sorted.length === 0 ? (
           <div className="comment-side-empty">
@@ -5767,6 +5783,7 @@ function HtmlViewer({
                     setSendingBoardBatch(false);
                   }
                 }}
+                onClose={() => setBoardMode(false)}
                 sending={sendingBoardBatch || streaming}
                 t={t}
               />
