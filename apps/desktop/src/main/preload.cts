@@ -27,9 +27,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // indirectly through legacy or future project-creation routes.
   openPath: (projectId: string): Promise<string> =>
     ipcRenderer.invoke('shell:open-path', projectId),
+  autoLaunch: {
+    get: (): Promise<boolean> =>
+      ipcRenderer.invoke('auto-launch:get'),
+    set: (enabled: boolean): Promise<boolean> =>
+      ipcRenderer.invoke('auto-launch:set', enabled),
+  },
 });
 
 contextBridge.exposeInMainWorld('__odDesktop', {
   printPdf: (html: string, nonce?: string) => ipcRenderer.invoke('od:print-pdf', html, nonce),
   isDesktop: true,
+  isPackaged: ipcRenderer.sendSync('auto-launch:is-packaged'),
 });

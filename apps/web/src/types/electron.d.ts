@@ -48,6 +48,10 @@ declare global {
       // failure (Electron's shell.openPath contract, plus PR #974
       // trust-boundary failures).
       openPath?: (projectId: string) => Promise<string>;
+      autoLaunch?: {
+        get: () => Promise<boolean>;
+        set: (enabled: boolean) => Promise<boolean>;
+      };
     };
   }
 }

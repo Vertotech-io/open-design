@@ -64,6 +64,8 @@ OD stands on four open-source shoulders:
 | **Imports** | Drop a [Claude Design][cd] export ZIP onto the welcome dialog — `POST /api/import/claude-design` parses it into a real project so your agent can keep editing where Anthropic left off |
 | **Persistence** | SQLite at `.od/app.sqlite`: projects · conversations · messages · tabs · saved templates. Reopen tomorrow, todo card and open files are exactly where you left them. |
 | **Lifecycle** | One entry point: `pnpm tools-dev` (start / stop / run / status / logs / inspect / check) — boots daemon + web (+ desktop) under typed sidecar stamps |
+| **Auto-launch** | Packaged desktop app registers as a macOS login item via `app.setLoginItemSettings()` — toggle in Settings → Desktop. Dev mode (`pnpm tools-dev`) is excluded automatically (`app.isPackaged` guard). Headless daemon auto-start via LaunchAgent plist or Nix Home Manager → [`docs/self-hosting.md`](docs/self-hosting.md) |
+| **Network security** | Bind to `0.0.0.0` with IP allowlist (`OD_ALLOWED_HOSTS`) + API key auth (`od auth key generate`). Tailscale devices (100.64.0.0/10) auto-detected and skip auth. Full guide → [`docs/network-security.md`](docs/network-security.md) |
 | **Desktop** | Optional Electron shell with sandboxed renderer + sidecar IPC (STATUS / EVAL / SCREENSHOT / CONSOLE / CLICK / SHUTDOWN) — drives `tools-dev inspect desktop screenshot` for E2E |
 | **Deployable to** | Local (`pnpm tools-dev`) · Vercel web layer · packaged Electron desktop app for macOS (Apple Silicon) and Windows (x64) — download from [open-design.ai](https://open-design.ai/) or the [latest release](https://github.com/nexu-io/open-design/releases) |
 | **License** | Apache-2.0 |
@@ -634,7 +636,7 @@ Open **Settings → MCP server** in the Open Design app for a per-client install
 
 The daemon must be running locally for MCP tool calls to succeed. If the agent was started before Open Design, restart the agent after Open Design is up so it can reach the live daemon. Tool calls made while the daemon is offline return a clear `"daemon not reachable"` error rather than a crash.
 
-**Security model.** The MCP server is read-only; it exposes file reads, file metadata, and search -- nothing that writes to disk or calls an external service. It runs as a child process of the coding agent over stdio, so any MCP client you register inherits read access to your local Open Design projects. Treat it like installing a VS Code extension: only register clients you trust. The daemon binds to `127.0.0.1` by default; LAN-wide exposure requires an explicit `OD_BIND_HOST` opt-in. If you also front the SPA with a non-loopback static server, set `OD_ALLOWED_ORIGINS=<origin1>,<origin2>,...` (comma-separated `scheme://host[:port]` entries) so the daemon's same-origin gate accepts API writes from those origins on both the `Origin` and `Host` checks; without it the browser will see 403s on every PUT/POST (Caddy v2 reverse_proxy preserves the original Host header upstream by default, so loopback alone is not enough). Connector-credential and live-artifact preview routes stay loopback-only regardless.
+**Security model.** The MCP server is read-only; it exposes file reads, file metadata, and search -- nothing that writes to disk or calls an external service. It runs as a child process of the coding agent over stdio, so any MCP client you register inherits read access to your local Open Design projects. Treat it like installing a VS Code extension: only register clients you trust. The daemon binds to `127.0.0.1` by default; LAN-wide exposure requires an explicit `OD_BIND_HOST` opt-in — see [`docs/network-security.md`](docs/network-security.md) for API key auth, IP allowlisting, and Tailscale setup. If you also front the SPA with a non-loopback static server, set `OD_ALLOWED_ORIGINS=<origin1>,<origin2>,...` (comma-separated `scheme://host[:port]` entries) so the daemon's same-origin gate accepts API writes from those origins on both the `Origin` and `Host` checks; without it the browser will see 403s on every PUT/POST (Caddy v2 reverse_proxy preserves the original Host header upstream by default, so loopback alone is not enough). Connector-credential and live-artifact preview routes stay loopback-only regardless.
 
 ## Repository structure
 
@@ -724,6 +726,8 @@ open-design/
 │   ├── skills-protocol.md         ← extended SKILL.md od: frontmatter
 │   ├── agent-adapters.md          ← per-CLI detection + dispatch
 │   ├── modes.md                   ← prototype / deck / template / design-system
+│   ├── self-hosting.md            ← local install, LAN sharing, tunnel, auto-start
+│   ├── network-security.md        ← 0.0.0.0 exposure, API keys, IP allowlist, Tailscale
 │   ├── references.md              ← long-form provenance
 │   ├── roadmap.md                 ← phased delivery
 │   ├── schemas/                   ← JSON schemas
@@ -972,6 +976,8 @@ Long-form provenance write-up — what we take from each, what we deliberately d
 - [ ] One-command `npx od init` to scaffold a project with `DESIGN.md`
 - [ ] Skill marketplace (`od skills install <github-repo>`) and `od skill add | list | remove | test` CLI surface (drafted in [`docs/skills-protocol.md`](docs/skills-protocol.md), implementation pending)
 - [x] Packaged Electron build out of `apps/packaged/` — macOS (Apple Silicon) and Windows (x64) downloads on [open-design.ai](https://open-design.ai/) and the [GitHub releases page](https://github.com/nexu-io/open-design/releases)
+- [x] Auto-launch support — macOS login item for packaged desktop app (`Settings → Desktop`), LaunchAgent plist and Nix Home Manager for headless daemon → [`docs/self-hosting.md`](docs/self-hosting.md)
+- [x] Network security — IP allowlist + API key auth for `0.0.0.0` exposure; Tailscale integration with zero-config WireGuard access → [`docs/network-security.md`](docs/network-security.md)
 
 Phased delivery → [`docs/roadmap.md`](docs/roadmap.md).
 

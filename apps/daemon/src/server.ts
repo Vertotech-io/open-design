@@ -16,6 +16,10 @@ import {
   shouldRenderCodexImagegenOverride,
 } from './prompts/system.js';
 import { expandHomePrefix, resolveProjectRelativePath } from './home-expansion.js';
+import { createAuthMiddleware } from './auth-middleware.js';
+import { allValidKeys, generateKey, listKeys, revokeKey } from './auth-store.js';
+import { createIpAllowlistMiddleware } from './ip-allowlist.js';
+import { isNetworkExposed, parseAllowedHosts, readNetworkConfig, writeNetworkConfig, mergeWithEnv } from './network-config.js';
 import { createCommandInvocation } from '@open-design/platform';
 import { SIDECAR_DEFAULTS, SIDECAR_ENV } from '@open-design/sidecar-proto';
 import {
@@ -2169,6 +2173,29 @@ export async function startServer({
   const app = express();
   app.use(express.json({ limit: '4mb' }));
 
+  // ── Network security middleware ──────────────────────────────
+  // When bound to a non-loopback address (e.g. 0.0.0.0), the
+  // daemon is reachable from the LAN. Apply IP allowlist and
+  // API key authentication to prevent unauthorized access.
+  const networkExposed = isNetworkExposed(host);
+  if (networkExposed) {
+    const allowedHosts = parseAllowedHosts(process.env.OD_ALLOWED_HOSTS);
+    app.use(createIpAllowlistMiddleware(allowedHosts));
+    app.use(createAuthMiddleware({
+      enabled: true,
+      resolveKeys: () => allValidKeys(RUNTIME_DATA_DIR),
+    }));
+    console.warn(`[od] daemon bound to ${host} — accessible from the network`);
+    if (allowedHosts.length === 0) {
+      console.warn('[od] WARNING: no IP allowlist (OD_ALLOWED_HOSTS) configured; all network hosts can connect');
+    }
+    void allValidKeys(RUNTIME_DATA_DIR).then((keys) => {
+      if (keys.length === 0) {
+        console.warn('[od] WARNING: no API keys configured; run `od auth key generate` to create one');
+      }
+    });
+  }
+
   // Multi-directory scanning shared by every skill / template surface. The
   // helpers delegate to listSkills(roots) which walks roots in priority
   // order, tags each entry with the SkillSource ('user' for the user
@@ -2343,6 +2370,63 @@ export async function startServer({
   app.get('/api/health', async (_req, res) => {
     const versionInfo = await readCurrentAppVersionInfo();
     res.json({ ok: true, version: versionInfo.version });
+  });
+
+  // ── Network config & API key management ────────────────────
+  app.get('/api/network-config', async (_req, res) => {
+    const stored = await readNetworkConfig(RUNTIME_DATA_DIR);
+    const config = mergeWithEnv(stored);
+    res.json(config);
+  });
+
+  app.put('/api/network-config', async (req, res) => {
+    const { bindHost, port, allowedHosts } = req.body ?? {};
+    const validHosts = ['127.0.0.1', '0.0.0.0', '::1', 'localhost'];
+    const host = typeof bindHost === 'string' ? bindHost : '127.0.0.1';
+    const isValidIp = (h: string) => {
+      const parts = h.split('.').map(Number);
+      return parts.length === 4 && parts.every((p) => Number.isInteger(p) && p >= 0 && p <= 255);
+    };
+    if (!validHosts.includes(host) && !isValidIp(host)) {
+      res.status(400).json({ error: 'INVALID_HOST', reason: 'bindHost must be a valid IPv4 address' });
+      return;
+    }
+    if (port !== undefined && typeof port !== 'number') {
+      res.status(400).json({ error: 'INVALID_PORT', reason: 'port must be a number' });
+      return;
+    }
+    const portNum = typeof port === 'number' ? port : 7456;
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      res.status(400).json({ error: 'INVALID_PORT', reason: 'port must be an integer between 1 and 65535' });
+      return;
+    }
+    const config = {
+      bindHost: host,
+      port: portNum,
+      allowedHosts: Array.isArray(allowedHosts) ? allowedHosts.filter((h: unknown) => typeof h === 'string') : [],
+    };
+    await writeNetworkConfig(RUNTIME_DATA_DIR, config);
+    res.json({ ok: true });
+  });
+
+  app.get('/api/auth/keys', async (_req, res) => {
+    const keys = await listKeys(RUNTIME_DATA_DIR);
+    res.json({ keys });
+  });
+
+  app.post('/api/auth/keys', async (req, res) => {
+    const { label } = req.body ?? {};
+    const entry = await generateKey(RUNTIME_DATA_DIR, typeof label === 'string' ? label : '');
+    res.json(entry);
+  });
+
+  app.delete('/api/auth/keys/:id', async (req, res) => {
+    const removed = await revokeKey(RUNTIME_DATA_DIR, req.params.id);
+    if (!removed) {
+      res.status(404).json({ error: 'NOT_FOUND' });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   app.get('/api/version', async (_req, res) => {

@@ -3,9 +3,10 @@ import { mkdir, writeFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { DesktopExportPdfInput, DesktopExportPdfResult } from "@open-design/sidecar-proto";
 
+import { enableAutoLaunch, disableAutoLaunch, isAutoLaunchEnabled } from "./auto-launch.js";
 import { exportPdfFromHtml, waitForPrintReadyHandshake } from "./pdf-export.js";
 
 /**
@@ -897,6 +898,19 @@ export async function createDesktopRuntime(options: DesktopRuntimeOptions): Prom
     } finally {
       if (!printWindow.isDestroyed()) printWindow.close();
     }
+  });
+
+  ipcMain.removeHandler('auto-launch:get');
+  ipcMain.removeHandler('auto-launch:set');
+  ipcMain.handle('auto-launch:get', () => isAutoLaunchEnabled());
+  ipcMain.handle('auto-launch:set', (_event, enabled: boolean) => {
+    return enabled ? enableAutoLaunch() : disableAutoLaunch();
+  });
+
+  // Synchronous reply so the preload can resolve isPackaged before
+  // the bridge is exposed to the renderer.
+  ipcMain.on('auto-launch:is-packaged', (event) => {
+    event.returnValue = app.isPackaged;
   });
 
   let currentUrl: string | null = null;
