@@ -699,6 +699,7 @@ export const zhCN: Dict = {
   'chat.importDesignSystemActive': '当前',
   'chat.importDesignSystemSwitched': '已切换设计体系为 {title}',
   'chat.importDesignSystemFailed': '切换设计体系失败，请重试。',
+  'chat.importDesignSystemLoadFailed': '无法加载设计体系。',
   'chat.linkedFolderRemoveAria': '移除关联文件夹 {path}',
   'chat.linkedFolderNotFound': '文件夹不存在',
   'chat.linkedFolderAlready': '该文件夹已关联',

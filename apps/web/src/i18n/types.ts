@@ -964,6 +964,7 @@ export interface Dict {
   'chat.importDesignSystemActive': string;
   'chat.importDesignSystemSwitched': string;
   'chat.importDesignSystemFailed': string;
+  'chat.importDesignSystemLoadFailed': string;
   'chat.linkedFolderRemoveAria': string;
   'chat.linkedFolderNotFound': string;
   'chat.linkedFolderAlready': string;

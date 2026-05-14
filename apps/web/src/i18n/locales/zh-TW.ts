@@ -690,6 +690,7 @@ export const zhTW: Dict = {
   'chat.importDesignSystemActive': '目前',
   'chat.importDesignSystemSwitched': '已切換設計系統為 {title}',
   'chat.importDesignSystemFailed': "切換設計系統失敗，請重試。",
+  'chat.importDesignSystemLoadFailed': '無法載入設計體系。',
   'chat.linkedFolderRemoveAria': '移除關聯資料夾 {path}',
   'chat.linkedFolderNotFound': '資料夾不存在',
   'chat.linkedFolderAlready': '該資料夾已關聯',
