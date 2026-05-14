@@ -150,7 +150,7 @@ interface Props {
   // input and the renderer POSTs `/api/import/folder` itself. Browser
   // builds have no `shell.openPath` surface, so the renderer naming a
   // path here cannot escalate (PR #974 trust model).
-  onImportFolder?: (baseDir: string) => Promise<void> | void;
+  onImportFolder?: (baseDir: string) => Promise<boolean> | boolean;
   // Electron flow: the desktop main process owns the picker dialog and
   // the import call atomically (`pickAndImport` IPC). The renderer
   // never sees the path or the HMAC token; it only receives the
@@ -621,8 +621,22 @@ export function NewProjectPanel({
     const trimmed = baseDir.trim();
     if (!trimmed) return;
     setImportingFolder(true);
+    setImportFolderError(null);
     try {
-      await onImportFolder(trimmed);
+      const success = await onImportFolder(trimmed);
+      if (success) {
+        // Success: the parent will navigate away, so this component
+        // will unmount before the toast can be shown. No need to set
+        // success state here.
+      } else {
+        setImportFolderError({
+          message: `Failed to open folder: ${trimmed}`,
+        });
+      }
+    } catch (err) {
+      setImportFolderError({
+        message: `Open folder failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+      });
     } finally {
       setImportingFolder(false);
     }
