@@ -501,6 +501,8 @@ export interface Dict {
   'settings.notifySoundBuzz': string;
   'settings.notifySoundTwoToneDown': string;
   'settings.notifySoundThud': string;
+  'settings.skillsNameRequired': string;
+  'settings.skillsBodyRequired': string;
   'notify.successTitle': string;
   'notify.failureTitle': string;
   'notify.successBody': string;

@@ -1213,6 +1213,10 @@ export const uk: Dict = {
   'settings.notifySoundBuzz': 'Гудіння',
   'settings.notifySoundTwoToneDown': 'Два тони вниз',
   'settings.notifySoundThud': 'Глухий звук',
+
+  'settings.skillsNameRequired': 'Skill name is required',
+
+  'settings.skillsBodyRequired': 'Skill body is required',
   'settings.skills': 'Навички',
   'settings.skillsHint': 'Функціональні навички, які агент може викликати під час задачі',
   'settings.skillsNew': 'Нова навичка',
