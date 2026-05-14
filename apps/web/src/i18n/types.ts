@@ -955,6 +955,15 @@ export interface Dict {
   'chat.importFolder': string;
   'chat.importSkills': string;
   'chat.importProject': string;
+  'chat.importDesignSystemHeader': string;
+  'chat.importDesignSystemBack': string;
+  'chat.importDesignSystemSearch': string;
+  'chat.importDesignSystemEmpty': string;
+  'chat.importDesignSystemNone': string;
+  'chat.importDesignSystemNoneSub': string;
+  'chat.importDesignSystemActive': string;
+  'chat.importDesignSystemSwitched': string;
+  'chat.importDesignSystemFailed': string;
   'chat.linkedFolderRemoveAria': string;
   'chat.linkedFolderNotFound': string;
   'chat.linkedFolderAlready': string;

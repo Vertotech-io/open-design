@@ -2694,6 +2694,13 @@ export function ProjectView({
               onProjectMetadataChange={(metadata) => {
                 onProjectChange({ ...project, metadata });
               }}
+              currentDesignSystemId={project.designSystemId}
+              onActiveDesignSystemChange={(designSystemId) => {
+                onProjectChange({ ...project, designSystemId });
+              }}
+              onShowToast={(message) => {
+                setProjectActionsToast({ message, details: null });
+              }}
               onCollapse={() => setWorkspaceFocused(true)}
             />
           ) : (
